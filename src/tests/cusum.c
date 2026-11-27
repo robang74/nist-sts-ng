@@ -33,6 +33,7 @@
 #include <math.h>
 #include <string.h>
 #include <errno.h>
+#include "../utils/packed.h"
 #include "../utils/externs.h"
 #include "../utils/cephes.h"
 #include "../utils/utilities.h"
@@ -162,13 +163,11 @@ void
 CumulativeSums_iterate(struct thread_state *thread_state)
 {
 	struct CumulativeSums_private_stats stat;	// Stats for this iteration
-	long int n;			// Length of a single bit stream
 	long int S;			// Variable used to store the forward partial sums
 	long int S_max;			// Maximum forward partial sum
 	long int S_min;			// Minimum forward partial sum
 	double p_value_forward;		// p_value for forward test
 	double p_value_backward;	// p_value for backward test
-	long int k;
 
 	/*
 	 * Check preconditions (firewall)
@@ -196,11 +195,6 @@ CumulativeSums_iterate(struct thread_state *thread_state)
 	}
 
 	/*
-	 * Collect parameters from state
-	 */
-	n = state->tp.n;
-
-	/*
 	 * Zeroize stats before performing the test
 	 */
 	memset(&stat, 0, sizeof(stat));
@@ -217,14 +211,9 @@ CumulativeSums_iterate(struct thread_state *thread_state)
 	 * the maximum and the minimum backwards partial sums will be respectively
 	 * (S - S_min) and (S - S_max).
 	 */
-	S = 0;
-	S_max = 0;
-	S_min = 0;
-	for (k = 0; k < n; k++) {
-		(state->epsilon[thread_state->thread_id][k] != 0) ? S++ : S--;
-		S_max = MAX(S, S_max);
-		S_min = MIN(S, S_min);
-	}
+	S = state->walk_summary[thread_state->thread_id].sum;
+	S_max = state->walk_summary[thread_state->thread_id].sup;
+	S_min = state->walk_summary[thread_state->thread_id].inf;
 
 	/*
 	 * Step 3: compute the test statistics

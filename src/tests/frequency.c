@@ -32,6 +32,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+#include "../utils/packed.h"
 #include <errno.h>
 #include "../utils/externs.h"
 #include "../utils/utilities.h"
@@ -154,7 +155,6 @@ Frequency_iterate(struct thread_state *thread_state)
 	double f;		// Term in the p-value formula
 	double s_obs;		// Test statistic
 	double p_value;		// p_value iteration test result(s)
-	long int i;
 
 	/*
 	 * Check preconditions (firewall)
@@ -190,16 +190,10 @@ Frequency_iterate(struct thread_state *thread_state)
 	/*
 	 * Step 1: compute S_n
 	 */
-	stat.S_n = 0;
-	for (i = 0; i < n; i++) {
-		if ((int) state->epsilon[thread_state->thread_id][i] == 1) {
-			stat.S_n++;
-		} else if ((int) state->epsilon[thread_state->thread_id][i] == 0) {
-			stat.S_n--;
-		} else {
-			err(41, __func__, "found a bit different than 1 or 0 in the sequence");
-		}
-	}
+	if (state->walk_summary[thread_state->thread_id].invalid != 0)
+		err(41, __func__, "found a bit different than 1 or 0 in the sequence");
+	stat.S_n = state->epsilon_ones[thread_state->thread_id] -
+		(n - state->epsilon_ones[thread_state->thread_id]);
 
 	/*
 	 * Step 2: compute the test statistic

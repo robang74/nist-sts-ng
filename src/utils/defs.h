@@ -24,6 +24,7 @@
 #ifndef DEFS_H
 #   define DEFS_H
 
+#   include <stdint.h>
 #   include "../utils/config.h"
 #   include "../utils/dyn_alloc.h"
 #   include <pthread.h>
@@ -340,6 +341,14 @@ struct metric_results {
 	long int random_excursions_var[4];
 };
 
+/* Per-stream summaries reused by several statistical tests. */
+struct sts_walk_summary {
+	long int sum;             /* final +/-1 walk sum */
+	long int sup;             /* maximum partial sum, including initial zero */
+	long int inf;             /* minimum partial sum, including initial zero */
+	long int invalid;         /* input bytes other than 0 or 1 */
+};
+
 /*
  * Special data for each template of each iteration in p_val (instead of just p_value doubles) for the NONOVERLAPPING test
  */
@@ -484,6 +493,9 @@ struct state {
 	double **rnd_excursion_pi_terms;	// Theoretical probabilities for states of TEST_RND_EXCURSION_VAR
 
 	bool legacy_output;			// true ==> try to mimic output format of legacy code
+	uint64_t **epsilon_words;		// MSB-first packed stream, per worker
+	long int *epsilon_ones;		// Number of one bits, per worker
+	struct sts_walk_summary *walk_summary;	// +/-1 walk summary, per worker
 };
 
 struct thread_state {

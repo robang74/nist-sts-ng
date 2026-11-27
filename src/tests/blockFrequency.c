@@ -33,6 +33,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include "../utils/packed.h"
 #include "../utils/externs.h"
 #include "../utils/cephes.h"
 #include "../utils/utilities.h"
@@ -181,7 +182,6 @@ BlockFrequency_iterate(struct thread_state *thread_state)
 	double pi;              // Proportion of ones in a block
 	double v;               // Value used in chi squared formula
 	long int i;
-	long int j;
 
 	/*
 	 * Check preconditions (firewall)
@@ -220,12 +220,7 @@ BlockFrequency_iterate(struct thread_state *thread_state)
 		/*
 		 * Step 2: determine the proportion of ones in each M-bit block
 		 */
-		blockSum = 0;
-		for (j = 0; j < M; j++) {
-			if (state->epsilon[thread_state->thread_id][j + i * M]) {
-				blockSum++;
-			}
-		}
+		blockSum = sts_packed_range_ones(state->epsilon_words[thread_state->thread_id], i * M, M);
 		pi = (double) blockSum / (double) M;
 
 		/*

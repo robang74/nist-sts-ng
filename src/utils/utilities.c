@@ -52,6 +52,7 @@
 // sts includes
 #include "../utils/externs.h"
 #include "utilities.h"
+#include "packed.h"
 #include "debug.h"
 
 
@@ -1618,6 +1619,10 @@ static void
 		}
 
 		pthread_mutex_unlock(thread_state->mutex);
+
+		/* Build per-worker packed data outside the input mutex. */
+		if (state->epsilon_words != NULL)
+			sts_prepare_packed_stream(state, thread_state->thread_id);
 
 		/*
 		 * Perform one iteration on the bitstreams read from the streamFile

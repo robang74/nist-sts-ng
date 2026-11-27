@@ -33,6 +33,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include "../utils/packed.h"
 #include "../utils/externs.h"
 #include "../utils/cephes.h"
 #include "../utils/utilities.h"
@@ -210,12 +211,7 @@ Runs_iterate(struct thread_state *thread_state)
 	/*
 	 * Step 1: determine the proportion of ones in the input sequence
 	 */
-	S = 0;
-	for (k = 0; k < n; k++) {
-		if (state->epsilon[thread_state->thread_id][k]) {
-			S++;
-		}
-	}
+	S = state->epsilon_ones[thread_state->thread_id];
 	stat.pi = (double) S / (double) n;
 
 	/*
@@ -231,10 +227,15 @@ Runs_iterate(struct thread_state *thread_state)
 		/*
 		 * Step 3: compute the test statistic
 		 */
-		stat.V_n = 1;
-		for (k = 1; k < n; k++) {
-			if (state->epsilon[thread_state->thread_id][k] != state->epsilon[thread_state->thread_id][k - 1]) {
-				stat.V_n++;
+		if (state->walk_summary[thread_state->thread_id].invalid == 0) {
+			stat.V_n = sts_packed_runs(state->epsilon_words[thread_state->thread_id], n);
+		} else {
+			/* Preserve Arcetri's byte-for-byte comparison for non-binary input. */
+			stat.V_n = 1;
+			for (k = 1; k < n; k++) {
+				if (state->epsilon[thread_state->thread_id][k] != state->epsilon[thread_state->thread_id][k - 1]) {
+					stat.V_n++;
+				}
 			}
 		}
 

@@ -371,9 +371,24 @@ init(struct state *state)
 	 */
 	for (i = 0; i < state->numberOfThreads; i++) {
 		state->epsilon[i] = calloc((size_t) state->tp.n, sizeof(BitSequence));
-		if (state->epsilon == NULL) {
+		if (state->epsilon[i] == NULL) {
 			errp(50, __func__, "cannot calloc for epsilon[%d]: %ld elements of %lu bytes each", i,
 			     state->tp.n, sizeof(BitSequence));
+		}
+	}
+	/* Allocate packed buffers only for tests that use them in this phase. */
+	if (state->testVector[TEST_FREQUENCY] || state->testVector[TEST_BLOCK_FREQUENCY] ||
+	    state->testVector[TEST_RUNS] || state->testVector[TEST_CUSUM]) {
+		size_t packed_words = (size_t) (state->tp.n / 64) + (state->tp.n % 64 != 0) + 2;
+		state->epsilon_words = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_words));
+		state->epsilon_ones = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_ones));
+		state->walk_summary = calloc((size_t) state->numberOfThreads, sizeof(*state->walk_summary));
+		if (state->epsilon_words == NULL || state->epsilon_ones == NULL || state->walk_summary == NULL)
+			errp(50, __func__, "cannot allocate packed stream metadata for %ld threads", state->numberOfThreads);
+		for (i = 0; i < state->numberOfThreads; ++i) {
+			state->epsilon_words[i] = calloc(packed_words, sizeof(*state->epsilon_words[i]));
+			if (state->epsilon_words[i] == NULL)
+				errp(50, __func__, "cannot allocate packed stream for thread %d", i);
 		}
 	}
 
@@ -1230,6 +1245,18 @@ destroy(struct state *state)
 		free(state->epsilon);
 		state->epsilon = NULL;
 	}
+	if (state->epsilon_words != NULL) {
+		for (i = 0; i < state->numberOfThreads; ++i) {
+			free(state->epsilon_words[i]);
+			state->epsilon_words[i] = NULL;
+		}
+		free(state->epsilon_words);
+		state->epsilon_words = NULL;
+	}
+	free(state->epsilon_ones);
+	state->epsilon_ones = NULL;
+	free(state->walk_summary);
+	state->walk_summary = NULL;
 	if (state->freqFilePath != NULL) {
 		free(state->freqFilePath);
 		state->freqFilePath = NULL;

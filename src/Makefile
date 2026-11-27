@@ -74,16 +74,17 @@ CSRC= sts.c tests/frequency.c tests/blockFrequency.c \
 	tests/approximateEntropy.c tests/randomExcursions.c \
 	tests/randomExcursionsVariant.c tests/linearComplexity.c \
 	utils/dfft.c utils/cephes.c utils/matrix.c utils/utilities.c \
-	utils/parse_args.c utils/debug.c utils/dyn_alloc.c utils/driver.c
+	utils/parse_args.c utils/debug.c utils/dyn_alloc.c utils/driver.c \
+	utils/packed.c
 
 HSRC= utils/cephes.h utils/config.h utils/defs.h \
 	utils/dfft.h utils/externs.h \
 	utils/matrix.h utils/stat_fncs.h utils/utilities.h utils/debug.h \
-	utils/dyn_alloc.h
+	utils/dyn_alloc.h utils/packed.h
 
 SRCS= ${CSRC} ${HSRC}
 
-LEGACY_ONLY_OBJ= utils/dyn_alloc_legacy.o \
+LEGACY_ONLY_OBJ= utils/dyn_alloc_legacy.o utils/packed_legacy.o \
       utils/dfft.o tests/discreteFourierTransform_legacy.o \
       sts_legacy.o tests/frequency_legacy.o tests/blockFrequency_legacy.o \
       tests/cusum_legacy.o tests/runs_legacy.o tests/longestRunOfOnes_legacy.o \
@@ -96,7 +97,7 @@ LEGACY_ONLY_OBJ= utils/dyn_alloc_legacy.o \
       utils/utilities_legacy.o \
       utils/parse_args_legacy.o utils/debug_legacy.o utils/driver_legacy.o
 
-MODERN_ONLY_OBJ= utils/dyn_alloc.o \
+MODERN_ONLY_OBJ= utils/dyn_alloc.o utils/packed.o \
       sts.o tests/frequency.o tests/blockFrequency.o \
       tests/cusum.o tests/runs.o tests/longestRunOfOnes.o \
       tests/serial.o tests/rank.o tests/discreteFourierTransform.o \
@@ -280,6 +281,13 @@ utils/matrix_legacy.o: utils/matrix.c
 	${CC} -c -o $@ ${CFLAGS} -DLEGACY_FFT utils/matrix.c
 
 utils/cephes.o: utils/cephes.c
+
+utils/packed.o: utils/packed.c
+	${CC} -c -o $@ ${CFLAGS} utils/packed.c
+
+utils/packed_legacy.o: utils/packed.c
+	${CC} -c -o $@ ${CFLAGS} -DLEGACY_FFT utils/packed.c
+
 	${CC} -c -o $@ ${CFLAGS} utils/cephes.c
 
 utils/cephes_legacy.o: utils/cephes.c
@@ -495,3 +503,7 @@ utils/dyn_alloc.o: utils/externs.h utils/defs.h utils/debug.h
 utils/dyn_alloc.o: utils/utilities.h
 utils/driver.o: utils/defs.h utils/utilities.h utils/debug.h
 utils/driver.o: utils/stat_fncs.h
+utils/packed.o utils/packed_legacy.o: utils/packed.h utils/defs.h utils/debug.h
+utils/utilities.o utils/utilities_legacy.o: utils/packed.h
+tests/frequency.o tests/frequency_legacy.o tests/blockFrequency.o tests/blockFrequency_legacy.o: utils/packed.h
+tests/runs.o tests/runs_legacy.o tests/cusum.o tests/cusum_legacy.o: utils/packed.h

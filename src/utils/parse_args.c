@@ -284,8 +284,11 @@ static struct state const defaultstate = {
 	NULL,
 	NULL,
 
-	// legacy_output
+	// legacy_output and appended packed-stream fields
 	false,
+	NULL,	// epsilon_words
+	NULL,	// epsilon_ones
+	NULL,	// walk_summary
 /* *INDENT-ON* */
 };
 
