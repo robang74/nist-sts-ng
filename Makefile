@@ -89,7 +89,7 @@ ${SRC}/sts_legacy_fft:
 #
 clean:
 	cd ${SRC}; $(MAKE) $@ ${PASSDOWN_VARS}
-	rm -f sts
+	rm -f sts $( find . -name \*.rej; find . -name \*.orig )
 
 clobber:
 	cd ${SRC}; $(MAKE) $@ ${PASSDOWN_VARS}
