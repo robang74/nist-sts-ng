@@ -515,6 +515,10 @@ struct thread_state {
 	long int iteration_being_done;
 	pthread_mutex_t *mutex;
 	int cpu_id;                            // Assigned logical CPU; -1 means unpinned
+	long int *cpu_owner;                   // CPU id -> owning thread_id; -1 means free
+	int *cpu_list;                         // Allowed logical CPU ids
+	int cpu_count;                         // Number of entries in cpu_list
+	int cpu_attr_set;                      // Affinity was applied before pthread_create()
 };
 
 /* *INDENT-ON* */

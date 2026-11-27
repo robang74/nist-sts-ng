@@ -64,6 +64,28 @@ CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -pedantic ${LOC_INC} ${DEBUG} ${OPT}
 PIN_CPUS ?= 0
 ifeq ($(PIN_CPUS),1)
 CFLAGS += -D_USE_PIN_CPUS
+
+# Probe the GNU pthread affinity entry points rather than assuming that
+# _GNU_SOURCE implies that every libc implements both interfaces.
+HAVE_PTHREAD_SETAFFINITY_NP := $(shell printf '%s\n' \
+    '#define _GNU_SOURCE' \
+    '#include <pthread.h>' \
+    '#include <sched.h>' \
+    'int main(void) { cpu_set_t s; CPU_ZERO(&s); return pthread_setaffinity_np(pthread_self(), sizeof(s), &s); }' \
+    | $(CC) $(CFLAGS) -pthread -x c -o /dev/null - >/dev/null 2>&1 && echo 1)
+ifeq ($(HAVE_PTHREAD_SETAFFINITY_NP),1)
+CFLAGS += -DHAVE_PTHREAD_SETAFFINITY_NP
+endif
+
+HAVE_PTHREAD_ATTR_SETAFFINITY_NP := $(shell printf '%s\n' \
+    '#define _GNU_SOURCE' \
+    '#include <pthread.h>' \
+    '#include <sched.h>' \
+    'int main(void) { pthread_attr_t a; cpu_set_t s; pthread_attr_init(&a); CPU_ZERO(&s); return pthread_attr_setaffinity_np(&a, sizeof(s), &s); }' \
+    | $(CC) $(CFLAGS) -pthread -x c -o /dev/null - >/dev/null 2>&1 && echo 1)
+ifeq ($(HAVE_PTHREAD_ATTR_SETAFFINITY_NP),1)
+CFLAGS += -DHAVE_PTHREAD_ATTR_SETAFFINITY_NP
+endif
 endif
 
 # locations

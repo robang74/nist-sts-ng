@@ -36,7 +36,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
-#if defined(_USE_PIN_CPUS) && defined(__linux__)
+#if defined(__linux__)
 #include <sched.h>
 #endif
 #include <dirent.h>
@@ -49,33 +49,6 @@
  * Forward static function declarations
  */
 static void change_params(struct state *state, long int parameter, long int value, double d_value);
-
-/*
- * Return the number of logical CPUs available to this process.
- * On Linux, sched_getaffinity() also observes taskset/cpuset restrictions.
- */
-static long int
-getAvailableCPUCount(void)
-{
-	long int count;
-#if defined(_USE_PIN_CPUS) && defined(__linux__)
-	cpu_set_t allowed_cpus;
-	int cpu;
-
-	count = 0;
-	CPU_ZERO(&allowed_cpus);
-	if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
-		for (cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
-			if (CPU_ISSET(cpu, &allowed_cpus))
-				++count;
-		}
-		if (count > 0)
-			return count;
-	}
-#endif
-	count = sysconf(_SC_NPROCESSORS_ONLN);
-	return (count > 0) ? count : 1;
-}
 
 /*
  * Default run state
@@ -428,7 +401,7 @@ parse_args(struct state *state, int argc, char **argv)
 	double d_value;		// Parsed parameter floating point
 	bool success = false;	// true if str2longint was successful
 	int test_cnt = 0;
-	long int i, available_cpus;
+	long int i;
 
 	/*
 	 * Record the program name
@@ -817,7 +790,6 @@ parse_args(struct state *state, int argc, char **argv)
 	if (test_cnt == 0 && state->batchmode == true) {
 		err(1, __func__, "no tests enabled");
 	}
-	available_cpus = getAvailableCPUCount();
 
 	/*
 	 * Set the number of uniformity bins to sqrt(iterations) if running in non-legacy mode and
@@ -861,16 +833,6 @@ parse_args(struct state *state, int argc, char **argv)
 		     , sysconf(_SC_NPROCESSORS_ONLN)/2);
 	}
 
-	/*
-	 * If a custom number of threads was set and this number is greater than the number of bitstreams
-	 * (aka iterations) set, fire a warning to the user that only $numOfBitstreams threads will be used.
-	 */
-	if (state->numberOfThreadsFlag == true && state->numberOfThreads > state->tp.numOfBitStreams) {
-		warn(__func__, "You chose to use %ld threads. However this number is greater than the number of bitstreams, which"
-				     " you set to %ld. Therefore only %ld threads will be used.", state->numberOfThreads,
-		     state->tp.numOfBitStreams, state->tp.numOfBitStreams);
-		state->numberOfThreads = state->tp.numOfBitStreams;
-	}
 
 	/*
 	 * Look for the matching .pvalues files in the folder given with -d

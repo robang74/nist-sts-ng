@@ -42,10 +42,6 @@
 #include <unistd.h>
 #if defined(_USE_PIN_CPUS) && defined(__linux__)
 #include <sched.h>
-/* glibc provides the GNU thread-attribute affinity API; musl does not. */
-#if defined(_GNU_SOURCE) && defined(__GLIBC__)
-#define HAVE_PTHREAD_ATTR_SETAFFINITY_NP 1
-#endif
 #endif
 
 // for checking dir
@@ -1495,9 +1491,7 @@ handleFileBasedBitStreams(struct state *state)
 	void *status;
 #if defined(_USE_PIN_CPUS) && defined(__linux__)
 	cpu_set_t allowed_cpus;
-	int cpu_list[CPU_SETSIZE];
 	int cpu_count = 0;
-	int cpu;
 #endif
 
 	/*
@@ -1545,16 +1539,22 @@ handleFileBasedBitStreams(struct state *state)
 	 */
 #if defined(_USE_PIN_CPUS) && defined(__linux__)
 	CPU_ZERO(&allowed_cpus);
-	if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
-		for (cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
-			if (CPU_ISSET(cpu, &allowed_cpus))
-				cpu_list[cpu_count++] = cpu;
-		}
-	}
-	if (cpu_count == 0) {
+ 	if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
+ 		for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+ 			if (CPU_ISSET(cpu, &allowed_cpus))
+ 				cpu_count++;
+ 		}
+ 	}
+ 	if (cpu_count == 0) {
 		warn(__func__, "cannot obtain the allowed CPU set; workers will run without pinning");
 	} else {
 		dbg(DBG_MED, "CPU pinning enabled for %d allowed logical CPUs", cpu_count);
+		/* The affinity mask may have changed since command-line parsing. */
+		if (state->numberOfThreads > cpu_count) {
+			warn(__func__, "worker count exceeds the current allowed CPU set; "
+			     "reducing it from %ld to %d", state->numberOfThreads, cpu_count);
+			state->numberOfThreads = cpu_count;
+		}
 	}
 #endif
 
