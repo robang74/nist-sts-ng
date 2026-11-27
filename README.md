@@ -1,5 +1,9 @@
 ## NIST Statistical Test Suite
 
+> [!NOTE]
+>
+> The `uchaosys` branch integrates the 20x [speedup](speed-up-assess.patch) based on the same principle already applied to the [nist-sts](https://github.com/robang74/nist-sts/tree/uchaosys) project by [AndreiBalan-dev](github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess). This branch is experimental and still under active development.
+
 ### TL;DR
 
 * **Step 0**: Generate raw binary data into a file, called say: randdata
