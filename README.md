@@ -1,8 +1,12 @@
 ## NIST Statistical Test Suite
 
+> [!WARNING]
+>
+> **The `uchaosys` is experimental and still under active development**.
+
 > [!NOTE]
 >
-> The `uchaosys` branch integrates the 20x [speedup](speed-up-assess.patch) based on the same principle already applied to the [nist-sts](https://github.com/robang74/nist-sts/tree/uchaosys) project by [AndreiBalan-dev](github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess). This branch is experimental and still under active development.
+> The `uchaosys` integrates the 20x [speedup](speedup/) based on the same principle already applied to the [nist-sts](https://github.com/robang74/nist-sts/blob/uchaosys/speed-up-assess.md) project by [AndreiBalan-dev](https://github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess). This optimization packs bitstreams into 64-bit words and reuses shared per-stream summaries, histograms, and bitwise/word-level operations with `-O3` compilation while keeping the original floating-point evaluation order to produce byte-identical outputs on valid inputs.
 
 ### TL;DR
 
