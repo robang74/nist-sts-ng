@@ -347,6 +347,11 @@ struct sts_walk_summary {
 	long int sup;             /* maximum partial sum, including initial zero */
 	long int inf;             /* minimum partial sum, including initial zero */
 	long int invalid;         /* input bytes other than 0 or 1 */
+	long int excursion_cycles; /* completed and final partial cycles */
+	long int excursion_cycle_bins[DEGREES_OF_FREEDOM_RND_EXCURSION]
+		[NUMBER_OF_STATES_RND_EXCURSION];
+	long int excursion_last_cycle_visits[NUMBER_OF_STATES_RND_EXCURSION];
+	long int excursion_variant_visits[NUMBER_OF_STATES_RND_EXCURSION_VAR];
 };
 
 /*

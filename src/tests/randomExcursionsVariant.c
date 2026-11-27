@@ -140,22 +140,6 @@ RandomExcursionsVariant_init(struct state *state)
 	}
 
 	/*
-	 * Allocate partial sums working array for each thread
-	 */
-	state->ex_var_partial_sums = malloc((size_t) state->numberOfThreads * sizeof(*state->ex_var_partial_sums));
-	if (state->ex_var_partial_sums == NULL) {
-		errp(190, __func__, "cannot malloc for ex_var_partial_sums: %ld elements of %lu bytes each", state->numberOfThreads,
-		     sizeof(*state->ex_var_partial_sums));
-	}
-	for (i = 0; i < state->numberOfThreads; i++) {
-		state->ex_var_partial_sums[i] = malloc(n * sizeof(state->ex_var_partial_sums[i][0]));
-		if (state->ex_var_partial_sums[i] == NULL) {
-			errp(190, __func__, "cannot malloc of %ld elements of %ld bytes each for state->ex_var_partial_sums[%ld]",
-			     state->tp.n, sizeof(state->ex_var_partial_sums[i][0]), i);
-		}
-	}
-
-	/*
 	 * Allocate dynamic arrays
 	 */
 	if (state->resultstxtFlag == true) {
@@ -191,13 +175,10 @@ void
 RandomExcursionsVariant_iterate(struct thread_state *thread_state)
 {
 	struct RandomExcursionsVariant_private_stats stat;	// Stats for this iteration
-	long int n;		// Length of a single bit stream
-	long int *S;		// Array of the partial sums of the -1/+1 states
+	struct sts_walk_summary *walk;
 	double p_value;		// p_value iteration test result(s)
 	double *p_values;	// Array of p-values produced by this test
 	long int i;
-	long int j;
-
 	/*
 	 * Check preconditions (firewall)
 	 */
@@ -221,71 +202,22 @@ RandomExcursionsVariant_iterate(struct thread_state *thread_state)
 	if (state->rnd_excursion_var_stateX == NULL) {
 		err(161, __func__, "state->rnd_excursion_var_stateX is NULL");
 	}
-	if (state->ex_var_partial_sums == NULL) {
-		err(161, __func__, "state->ex_var_partial_sums is NULL");
+	if (state->walk_summary == NULL) {
+		err(161, __func__, "state->walk_summary is NULL");
 	}
-	if (state->ex_var_partial_sums[thread_state->thread_id] == NULL) {
-		err(161, __func__, "state->ex_var_partial_sums[%ld] is NULL", thread_state->thread_id);
+	walk = &state->walk_summary[thread_state->thread_id];
+	if (walk->invalid != 0) {
+		err(41, __func__, "found a bit different than 1 or 0 in the sequence");
 	}
 	if (state->cSetup != true) {
 		err(161, __func__, "test constants not setup prior to calling %s for %s[%d]",
 		    __func__, state->testNames[test_num], test_num);
 	}
 
-	/*
-	 * Collect parameters from state
-	 */
-	S = state->ex_var_partial_sums[thread_state->thread_id];
-	n = state->tp.n;
-
-	/*
-	 * Set the initial value of the counter of the number of cycles
-	 */
-	stat.number_of_cycles = 0;
-
-	/*
-	 * Step 2: compute the partial sums of successively larger sub-sequences
-	 */
-	if ((int) state->epsilon[thread_state->thread_id][0] == 1) {
-		S[0] = 1;
-	} else if ((int) state->epsilon[thread_state->thread_id][0] == 0) {
-		S[0] = - 1;
-	} else {
-		err(41, __func__, "found a bit different than 1 or 0 in the sequence");
-	}
-	for (j = 1; j < n; j++) {
-		if ((int) state->epsilon[thread_state->thread_id][j] == 1) {
-			S[j] = S[j - 1] + 1;
-		} else if ((int) state->epsilon[thread_state->thread_id][j] == 0) {
-			S[j] = S[j - 1] - 1;
-		} else {
-			err(41, __func__, "found a bit different than 1 or 0 in the sequence");
-		}
-
-		/*
-		 * Step 3a: whenever a 0 in the partial sums is found, which means that a cycle has
-		 * ended, count a new cycle in the counter of cycles
-		 */
-		if (S[j] == 0) {
-			stat.number_of_cycles++;
-		}
-	}
-
-	/*
-	 * Step 3b: count the last cycle if it was not counted already
-	 */
-	if (S[n - 1] != 0) {
-		stat.number_of_cycles++;
-	}
-
-	/*
-	 * Step 3c: determine if there are enough cycles
-	 */
+	stat.number_of_cycles = walk->excursion_cycles;
+	memcpy(stat.counter, walk->excursion_variant_visits, sizeof(stat.counter));
 	stat.test_possible = (stat.number_of_cycles < state->c.min_zero_crossings) ? false : true;
 
-	/*
-	 * Perform and record the test if it is possible to test
-	 */
 	if (stat.test_possible == true) {
 
 		p_values = malloc(NUMBER_OF_STATES_RND_EXCURSION_VAR * sizeof(*p_values));
@@ -294,16 +226,6 @@ RandomExcursionsVariant_iterate(struct thread_state *thread_state)
 		 * For each of the state values, compute the test statistic and the p-value
 		 */
 		for (i = 0; i < NUMBER_OF_STATES_RND_EXCURSION_VAR; i++) {
-
-			/*
-			 * Step 4: count times when the partial sum matches this excursion state value
-			 */
-			stat.counter[i] = 0;
-			for (j = 0; j < n; j++) {
-				if (S[j] == state->rnd_excursion_var_stateX[i]) {
-					stat.counter[i]++;
-				}
-			}
 
 			/*
 			 * Step 5: compute the test p-value for this excursion state value
@@ -1275,16 +1197,13 @@ RandomExcursionsVariant_destroy(struct state *state)
 		free(state->rnd_excursion_var_stateX);
 		state->rnd_excursion_var_stateX = NULL;
 	}
-	for (i = 0; i < state->numberOfThreads; i++) {
-		if (state->ex_var_partial_sums[i] != NULL) {
-			free(state->ex_var_partial_sums[i]);
-			state->ex_var_partial_sums[i] = NULL;
-		}
-	}
 	if (state->ex_var_partial_sums != NULL) {
+		for (i = 0; i < state->numberOfThreads; i++) {
+			if (state->ex_var_partial_sums[i] != NULL)
+				free(state->ex_var_partial_sums[i]);
+		}
 		free(state->ex_var_partial_sums);
 		state->ex_var_partial_sums = NULL;
 	}
-
 	return;
 }

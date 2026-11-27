@@ -20,12 +20,29 @@ sts_popcount64(uint64_t x)
 #endif
 }
 
+
+static void
+sts_finish_excursion_cycle(struct sts_walk_summary *walk, long int *counts)
+{
+	unsigned int i;
+	unsigned int bin;
+
+	for (i = 0; i < NUMBER_OF_STATES_RND_EXCURSION; ++i) {
+		bin = (counts[i] >= DEGREES_OF_FREEDOM_RND_EXCURSION - 1)
+			? DEGREES_OF_FREEDOM_RND_EXCURSION - 1 : (unsigned int) counts[i];
+		walk->excursion_cycle_bins[bin][i]++;
+		walk->excursion_last_cycle_visits[i] = counts[i];
+		counts[i] = 0;
+	}
+	walk->excursion_cycles++;
+}
 void
 sts_prepare_packed_stream(struct state *state, long int thread_id)
 {
 	long int n;
 	long int i;
 	long int sum = 0;
+	long int excursion_counts[NUMBER_OF_STATES_RND_EXCURSION] = { 0 };
 	struct sts_walk_summary *walk;
 	uint64_t *words;
 
@@ -63,7 +80,27 @@ sts_prepare_packed_stream(struct state *state, long int thread_id)
 			walk->sup = sum;
 		if (sum < walk->inf)
 			walk->inf = sum;
+
+		/* Accumulate state visits in the current cycle in the same pass. */
+		if (sum == 0) {
+			sts_finish_excursion_cycle(walk, excursion_counts);
+		} else {
+			long int magnitude = (sum < 0) ? -sum : sum;
+			if (magnitude <= MAX_EXCURSION_RND_EXCURSION) {
+				long int index = sum + ((sum < 0)
+					? MAX_EXCURSION_RND_EXCURSION : MAX_EXCURSION_RND_EXCURSION - 1);
+				excursion_counts[index]++;
+			}
+			if (magnitude <= MAX_EXCURSION_RND_EXCURSION_VAR) {
+				long int index = sum + ((sum < 0)
+					? MAX_EXCURSION_RND_EXCURSION_VAR : MAX_EXCURSION_RND_EXCURSION_VAR - 1);
+				walk->excursion_variant_visits[index]++;
+			}
+		}
 	}
+	/* An unfinished tail is the final (non-returning) cycle. */
+	if (sum != 0)
+		sts_finish_excursion_cycle(walk, excursion_counts);
 	walk->sum = sum;
 }
 

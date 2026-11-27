@@ -117,28 +117,6 @@ RandomExcursions_init(struct state *state)
 	}
 
 	/*
-	 * Allocate the partial sums and the cycle arrays for each thread
-	 */
-	state->rnd_excursion_S = malloc((size_t) state->numberOfThreads * sizeof(*state->rnd_excursion_S));
-	if (state->rnd_excursion_S == NULL) {
-		errp(150, __func__, "cannot malloc for rnd_excursion_S: %ld elements of %lu bytes each", state->numberOfThreads,
-		     sizeof(*state->rnd_excursion_S));
-	}
-	state->rnd_excursion_cycle = malloc((size_t) state->numberOfThreads * sizeof(*state->rnd_excursion_cycle));
-	if (state->rnd_excursion_cycle == NULL) {
-		errp(150, __func__, "cannot malloc for rnd_excursion_cycle: %ld elements of %lu bytes each", state->numberOfThreads,
-		     sizeof(*state->rnd_excursion_cycle));
-	}
-	for (i = 0; i < state->numberOfThreads; i++) {
-		state->rnd_excursion_S[i] = malloc(n * sizeof(state->rnd_excursion_S[i][0]));
-		if (state->rnd_excursion_S[i] == NULL) {
-			errp(150, __func__, "cannot malloc of %ld elements of %ld bytes each for state->rnd_excursion_S[%ld]",
-			     n, sizeof(state->rnd_excursion_S[i][0]), i);
-		}
-		state->rnd_excursion_cycle[i] = create_dyn_array(sizeof(long int), DEFAULT_CHUNK, (long int) state->c.sqrtn, true);
-	}
-
-	/*
 	 * Create working sub-directory if forming files such as results.txt and stats.txt
 	 */
 	if (state->resultstxtFlag == true) {
@@ -242,23 +220,15 @@ void
 RandomExcursions_iterate(struct thread_state *thread_state)
 {
 	struct RandomExcursions_private_stats stat;	// Stats for this iteration
-	long int n;					// Length of a single bit stream
+	struct sts_walk_summary *walk;
 	long int v[DEGREES_OF_FREEDOM_RND_EXCURSION][NUMBER_OF_STATES_RND_EXCURSION];	// Global frequency counters
-	struct dyn_array *cycle;	// Counter used for single iterations
-	long int *S;			// Array of the partial sums of the -1/+1 states
-	long int count_index;		// Index of the count array to be incremented
-	long int offset;		// Sum offset used to get the index of a state value in the counter array
 	long int x;			// State value to test
-	long int labs_x;		// Absolute value of the state value x
-	long int cycleStart;		// Index where a cycle starts
-	long int cycleStop;		// Index where a cycle ends
-	long int occurrences;		// Number of occurrences of a given state value in a cycle
+	long int labs_x;			// Absolute value of the state value x
 	double p_value;			// p_value iteration test result(s)
 	double *p_values;		// Array of p-values produced by this test
 	double sum_term;		// Value whose square is used to compute the test statistic
 	long int i;
 	long int j;
-
 	/*
 	 * Check preconditions (firewall)
 	 */
@@ -282,186 +252,24 @@ RandomExcursions_iterate(struct thread_state *thread_state)
 	if (state->rnd_excursion_stateX == NULL) {
 		err(151, __func__, "state->rnd_excursion_stateX is NULL");
 	}
-	if (state->rnd_excursion_S == NULL) {
-		err(151, __func__, "state->rnd_excursion_S is NULL");
+	if (state->walk_summary == NULL) {
+		err(151, __func__, "state->walk_summary is NULL");
 	}
-	if (state->rnd_excursion_S[thread_state->thread_id] == NULL) {
-		err(151, __func__, "state->rnd_excursion_S[%ld] is NULL", thread_state->thread_id);
-	}
-	if (state->rnd_excursion_cycle == NULL) {
-		err(151, __func__, "state->rnd_excursion_cycle is NULL");
-	}
-	if (state->rnd_excursion_cycle[thread_state->thread_id] == NULL) {
-		err(151, __func__, "state->rnd_excursion_cycle[%ld] is NULL", thread_state->thread_id);
+	walk = &state->walk_summary[thread_state->thread_id];
+	if (walk->invalid != 0) {
+		err(41, __func__, "found a bit different than 1 or 0 in the sequence");
 	}
 	if (state->cSetup != true) {
 		err(151, __func__, "test constants not setup prior to calling %s for %s[%d]",
 		    __func__, state->testNames[test_num], test_num);
 	}
 
-	/*
-	 * Collect parameters from state
-	 */
-	n = state->tp.n;
-	S = state->rnd_excursion_S[thread_state->thread_id];
-	cycle = state->rnd_excursion_cycle[thread_state->thread_id];
-
-	/*
-	 * Clear the cycle array for this iteration
-	 */
-	clear_dyn_array(cycle);
-
-	/*
-	 * Step 3: compute the partial sums of successively larger sub-sequences
-	 */
-	if ((int) state->epsilon[thread_state->thread_id][0] == 1) {
-		S[0] = 1;
-	} else if ((int) state->epsilon[thread_state->thread_id][0] == 0) {
-		S[0] = - 1;
-	} else {
-		err(41, __func__, "found a bit different than 1 or 0 in the sequence");
-	}
-	for (i = 1; i < n; i++) {
-		if ((int) state->epsilon[thread_state->thread_id][i] == 1) {
-			S[i] = S[i - 1] + 1;
-		} else if ((int) state->epsilon[thread_state->thread_id][i] == 0) {
-			S[i] = S[i - 1] - 1;
-		} else {
-			err(41, __func__, "found a bit different than 1 or 0 in the sequence");
-		}
-
-		/*
-		 * Step 4a: whenever a 0 in the partial sums is found, which means that a cycle has
-		 * ended, append the ending position of that cycle to the cycle array
-		 */
-		if (S[i] == 0) {
-			append_value(cycle, &i);
-		}
-	}
-
-	/*
-	 * Step 4b: count the last cycle if it was not counted already
-	 */
-	if (S[n - 1] != 0) {
-		append_value(cycle, &n);
-	}
-
-	/*
-	 * Step 4c: get the total number of cycles.
-	 * The number of cycles will be equal to the number of elements in the cycles array.
-	 */
-	stat.number_of_cycles = cycle->count;
-
-	/*
-	 * Step 4d: determine if there are enough cycles
-	 */
+	stat.number_of_cycles = walk->excursion_cycles;
+	memcpy(v, walk->excursion_cycle_bins, sizeof(v));
+	memcpy(stat.counter, walk->excursion_last_cycle_visits, sizeof(stat.counter));
 	stat.test_possible = (stat.number_of_cycles < state->c.min_zero_crossings) ? false : true;
 
-	/*
-	 * Perform and record the test if it is possible to test
-	 */
 	if (stat.test_possible == true) {
-
-		/*
-		 * Zeroize variables and global counters
-		 */
-		memset(v, 0, sizeof(v));
-		cycleStop = 0;
-
-		/*
-		 * Step 5: for each cycle and for each non-zero state value x,
-		 * compute the frequency of each x within each cycle.
-		 */
-		for (j = 0; j < stat.number_of_cycles; j++) {
-
-			/*
-			 * Get beginning and ending indexes of the cycle j
-			 */
-			cycleStart = cycleStop;
-			cycleStop = get_value(cycle, long int, j);
-
-			/*
-			 * Zeroize the counters for this test
-			 */
-			memset(stat.counter, 0, sizeof(stat.counter));
-
-			/*
-			 * Check preconditions (firewall)
-			 */
-			if (cycleStart < 0) {
-				err(151, __func__, "cycleStart: %ld < 0", cycleStart);
-			}
-			if (cycleStart > n) {
-				err(151, __func__, "cycleStart: %ld > n: %ld", cycleStart, n);
-			}
-			if (cycleStop < 0) {
-				err(151, __func__, "cycleStop: %ld < 0", cycleStop);
-			}
-			if (cycleStop > n) {
-				err(151, __func__, "cycleStop: %ld > n: %ld", cycleStop, n);
-			}
-
-			/*
-			 * Consider each partial sum value of the cycle
-			 */
-			for (i = cycleStart; i < cycleStop; i++) {
-
-				/*
-				 * Check if the value of the partial sum is one of the state values of interest
-				 */
-				if ((labs(S[i]) >= 1) && (labs(S[i]) <= MAX_EXCURSION_RND_EXCURSION)) {
-
-					/*
-					 * Get the index of this state value in the counter array.
-					 * This is done because the array cannot have negative indexes.
-					 * Thus, the most negative x will correspond to the item in index 0.
-					 *
-					 * For example, if MAX_EXCURSION_RND_EXCURSION is 4, the counter for
-					 * x = -4 is the counter[0] and the counter for x = 4 is counter[7]
-					 */
-					offset = (S[i] < 0) ? MAX_EXCURSION_RND_EXCURSION : MAX_EXCURSION_RND_EXCURSION - 1;
-					count_index = S[i] + offset;
-
-					/*
-					 * Check preconditions (firewall)
-					 */
-					if (count_index < 0) {
-						err(151, __func__, "count_index: %ld < 0", count_index);
-					}
-
-					/*
-					 * Increase the counter of the considered state value
-					 */
-					stat.counter[count_index]++;
-				}
-			}
-
-			/*
-			 * Step 6: for each of the states, increase the the counters of v consequently:
-			 * v[k][i] contains the exact number of cycles in which state i occurs exactly k times
-			 */
-			for (i = 0; i < NUMBER_OF_STATES_RND_EXCURSION; i++) {
-
-				/*
-				 * Get the number of occurrences of the state value in cycle i
-				 */
-				occurrences = stat.counter[i];
-
-				/*
-				 * If the number of occurrences is between 0 and MAX_K, count it in its counter
-				 */
-				if ((occurrences >= 0) && (occurrences < (DEGREES_OF_FREEDOM_RND_EXCURSION - 1))) {
-					v[stat.counter[i]][i]++;
-				}
-
-				/*
-				 * If the number of occurrences is bigger than MAX_K, count it in the MAX_K counter
-				 */
-				else if (occurrences >= DEGREES_OF_FREEDOM_RND_EXCURSION - 1) {
-					v[DEGREES_OF_FREEDOM_RND_EXCURSION - 1][i]++;
-				}
-			}
-		}
 
 		p_values = malloc(NUMBER_OF_STATES_RND_EXCURSION * sizeof(*p_values));
 
@@ -1492,21 +1300,19 @@ RandomExcursions_destroy(struct state *state)
 		free(state->rnd_excursion_stateX);
 		state->rnd_excursion_stateX = NULL;
 	}
-	for (i = 0; i < state->numberOfThreads; i++) {
-		if (state->rnd_excursion_S[i] != NULL) {
-			free(state->rnd_excursion_S[i]);
-			state->rnd_excursion_S[i] = NULL;
-		}
-		if (state->rnd_excursion_cycle[i] != NULL) {
-			free_dyn_array(state->rnd_excursion_cycle[i]);
-			state->rnd_excursion_cycle[i] = NULL;
-		}
-	}
 	if (state->rnd_excursion_S != NULL) {
+		for (i = 0; i < state->numberOfThreads; i++) {
+			if (state->rnd_excursion_S[i] != NULL)
+				free(state->rnd_excursion_S[i]);
+		}
 		free(state->rnd_excursion_S);
 		state->rnd_excursion_S = NULL;
 	}
 	if (state->rnd_excursion_cycle != NULL) {
+		for (i = 0; i < state->numberOfThreads; i++) {
+			if (state->rnd_excursion_cycle[i] != NULL)
+				free_dyn_array(state->rnd_excursion_cycle[i]);
+		}
 		free(state->rnd_excursion_cycle);
 		state->rnd_excursion_cycle = NULL;
 	}

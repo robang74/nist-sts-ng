@@ -378,7 +378,8 @@ init(struct state *state)
 	}
 	/* Allocate packed buffers only for tests that use them in this phase. */
 	if (state->testVector[TEST_FREQUENCY] || state->testVector[TEST_BLOCK_FREQUENCY] ||
-	    state->testVector[TEST_RUNS] || state->testVector[TEST_CUSUM]) {
+	    state->testVector[TEST_RUNS] || state->testVector[TEST_CUSUM] ||
+	    state->testVector[TEST_RND_EXCURSION] || state->testVector[TEST_RND_EXCURSION_VAR]) {
 		size_t packed_words = (size_t) (state->tp.n / 64) + (state->tp.n % 64 != 0) + 2;
 		state->epsilon_words = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_words));
 		state->epsilon_ones = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_ones));
