@@ -41,6 +41,10 @@
 
 #define B_VALUE (1)		// The B template to be matched contains only 1 values
 
+#if DEFAULT_OVERLAPPING != 9 || BLOCK_LENGTH_OVERLAPPING != 1032
+# error "pi_term[] requires overlapping template parameters m=9, M=1032"
+#endif
+
 /*
  * Private stats - stats.txt information for this test
  */
