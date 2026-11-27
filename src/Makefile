@@ -6,7 +6,7 @@
 #
 # 	Landon Curt Noll
 # 	Tom Gilgan
-#	Riccardo Paccagnella
+# 	Riccardo Paccagnella
 #
 # See the README.md and the initial comment in sts.c for more information.
 #
@@ -49,15 +49,15 @@ DIFF= diff
 # how to compile
 #
 LEGACY_LIBS= -lm -pthread
-LIBS= -lm -L/usr/local/lib -lfftw3 -pthread
+LIBS= -L/usr/local/lib -lfftw3 $(LEGACY_LIB) --static
 #OPT=
-OPT= -O3
-#DEBUG=
-DEBUG= -g3
+OPT= -O3 -s -g0
+DEBUG=
+#DEBUG= -g3
 LOC_INC= -I /usr/include -I /usr/global/include -I /usr/local/include
 #CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -Werror -pedantic -DDEBUG_LINT ${LOC_INC} ${OPT} ${DEBUG}
 #CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -Werror -pedantic ${LOC_INC} ${OPT} ${DEBUG}
-CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -pedantic ${LOC_INC} ${OPT} ${DEBUG}
+CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -pedantic ${LOC_INC} ${DEBUG} ${OPT}
 
 # locations
 #
