@@ -37,6 +37,7 @@
 #include "../utils/utilities.h"
 #include "../utils/cephes.h"
 #include "../utils/debug.h"
+#include "../utils/packed.h"
 
 
 /*
@@ -331,6 +332,10 @@ compute_phi(struct thread_state *thread_state, long int blocksize)
 	 * Collect parameters from state
 	 */
 	n = state->tp.n;
+
+	if (state->walk_summary != NULL &&
+	    state->walk_summary[thread_state->thread_id].pattern_histogram != NULL)
+		return sts_packed_pattern_phi(&state->walk_summary[thread_state->thread_id], n, blocksize);
 
 	/*
 	 * Compute how many counters are needed, i.e. how many different possible

@@ -352,6 +352,11 @@ struct sts_walk_summary {
 		[NUMBER_OF_STATES_RND_EXCURSION];
 	long int excursion_last_cycle_visits[NUMBER_OF_STATES_RND_EXCURSION];
 	long int excursion_variant_visits[NUMBER_OF_STATES_RND_EXCURSION_VAR];
+	/* Shared largest-window histogram for Serial and Approximate Entropy.
+	 * The pointer aliases one of the existing per-thread test workspaces
+	 * (serial_v or apen_C); it is never separately allocated or freed. */
+	long int *pattern_histogram;
+	long int pattern_histogram_bits;
 };
 
 /*

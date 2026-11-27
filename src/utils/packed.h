@@ -13,4 +13,14 @@ long int sts_packed_range_ones(const uint64_t *words, long int first, long int c
 /* Number of runs in the first n bits (1 for every non-empty stream). */
 long int sts_packed_runs(const uint64_t *words, long int n);
 
+/* Build one circular histogram of all blocksize-bit windows. */
+void sts_packed_pattern_histogram(const uint64_t *words, long int n,
+				  long int blocksize, long int *histogram,
+				  long int histogram_len);
+/* Compute Serial psi-squared / Approximate Entropy phi from a
+ * largest-window histogram by aggregating its prefixes. */
+double sts_packed_pattern_psi2(const struct sts_walk_summary *walk,
+				       long int n, long int blocksize);
+double sts_packed_pattern_phi(const struct sts_walk_summary *walk,
+				      long int n, long int blocksize);
 #endif /* STS_PACKED_H */
