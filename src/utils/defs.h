@@ -506,6 +506,7 @@ struct state {
 	uint64_t **epsilon_words;		// MSB-first packed stream, per worker
 	long int *epsilon_ones;		// Number of one bits, per worker
 	struct sts_walk_summary *walk_summary;	// +/-1 walk summary, per worker
+	double *universal_logdist;	// Shared log2(distance) table for TEST_UNIVERSAL
 };
 
 struct thread_state {

@@ -1,0 +1,604 @@
+From 63cc52ea947a1093c3c0e3653b8ec408e6d434e2 Mon Sep 17 00:00:00 2001
+From: "Roberto A. Foglietta" <roberto.foglietta@gmail.com>
+Date: Fri, 27 Nov 2026 16:30:53 +0100
+Subject: [PATCH] speedup/phase6: speeding up, patch p.6
+
+Signed-off-by: Roberto A. Foglietta <roberto.foglietta@gmail.com>
+---
+ src/tests/discreteFourierTransform.c |  22 ++--
+ src/tests/linearComplexity.c         | 105 +++++++++--------
+ src/tests/longestRunOfOnes.c         |  29 +++--
+ src/tests/universal.c                |  50 ++++++--
+ src/utils/defs.h                     |   1 +
+ src/utils/driver.c                   |   4 +-
+ src/utils/packed.c                   | 164 +++++++++++++++++++++++++++
+ src/utils/packed.h                   |   6 +
+ src/utils/parse_args.c               |   1 +
+ 9 files changed, 310 insertions(+), 72 deletions(-)
+
+diff --git a/src/tests/discreteFourierTransform.c b/src/tests/discreteFourierTransform.c
+index 934df93..8894edd 100644
+--- a/src/tests/discreteFourierTransform.c
++++ b/src/tests/discreteFourierTransform.c
+@@ -323,13 +323,21 @@ DiscreteFourierTransform_iterate(struct thread_state *thread_state)
+ 	/*
+ 	 * Step 1: initialize X for this iteration
+ 	 */
+-	for (i = 0; i < n; i++) {
+-		if ((int) state->epsilon[thread_state->thread_id][i] == 1) {
+-			X[i] = 1;
+-		} else if ((int) state->epsilon[thread_state->thread_id][i] == 0) {
+-			X[i] = -1;
+-		} else {
+-			err(41, __func__, "found a bit different than 1 or 0 in the sequence");
++	if (state->walk_summary != NULL &&
++	    state->walk_summary[thread_state->thread_id].invalid == 0) {
++		/* Binary input is known: this simple conversion is vectorizable. */
++		for (i = 0; i < n; i++)
++			X[i] = (double) state->epsilon[thread_state->thread_id][i] * 2.0 - 1.0;
++	} else {
++		/* Preserve the original validation and error behavior for other bytes. */
++		for (i = 0; i < n; i++) {
++			if ((int) state->epsilon[thread_state->thread_id][i] == 1) {
++				X[i] = 1;
++			} else if ((int) state->epsilon[thread_state->thread_id][i] == 0) {
++				X[i] = -1;
++			} else {
++				err(41, __func__, "found a bit different than 1 or 0 in the sequence");
++			}
+ 		}
+ 	}
+ 
+diff --git a/src/tests/linearComplexity.c b/src/tests/linearComplexity.c
+index bff3786..ba588ee 100644
+--- a/src/tests/linearComplexity.c
++++ b/src/tests/linearComplexity.c
+@@ -37,6 +37,7 @@
+ #include "../utils/cephes.h"
+ #include "../utils/utilities.h"
+ #include "../utils/debug.h"
++#include "../utils/packed.h"
+ 
+ 
+ /*
+@@ -230,6 +231,7 @@ LinearComplexity_iterate(struct thread_state *thread_state)
+ 	long int i;
+ 	long int j;
+ 	long int k;
++	bool packed_bm;
+ 
+ 	/*
+ 	 * Check preconditions (firewall)
+@@ -276,6 +278,10 @@ LinearComplexity_iterate(struct thread_state *thread_state)
+ 	M = state->tp.linearComplexitySequenceLength;
+ 	n = state->tp.n;
+ 	N = n / M;
++	packed_bm = state->epsilon_words != NULL &&
++		state->epsilon_words[thread_state->thread_id] != NULL &&
++		state->walk_summary != NULL &&
++		state->walk_summary[thread_state->thread_id].invalid == 0;
+ 
+ 	/*
+ 	 * Zeroize the v counters
+@@ -290,65 +296,70 @@ LinearComplexity_iterate(struct thread_state *thread_state)
+ 	 */
+ 	for (i = 0; i < N; i++) {
+ 
+-		/*
+-		 * Sub-step 2: Zeroize the two arrays b and c and set b[0] and c[0] to 1
+-		 */
+-		memset(state->linear_b[thread_state->thread_id], 0, M * sizeof(state->linear_b[thread_state->thread_id][0]));
+-		memset(state->linear_c[thread_state->thread_id], 0, M * sizeof(state->linear_c[thread_state->thread_id][0]));
+-		state->linear_c[thread_state->thread_id][0] = 1;
+-		state->linear_b[thread_state->thread_id][0] = 1;
+-
+-		/*
+-		 * Sub-step 3: initialize L and m to their initial values
+-		 */
+-		L = 0;
+-		m = -1;
+-
+-		/*
+-		 * NOTE: j is the N of the algorithm instructions
+-		 * 	 M is the n of the algorithm instructions
+-		 */
+-		for (j = 0; j < M; j++) {
+-
++		if (packed_bm) {
++			L = sts_packed_linear_complexity(state->epsilon_words[thread_state->thread_id],
++						 i * M, M);
++		} else {
+ 			/*
+-			 * Sub-step 4a: set the discrepancy
++			 * Sub-step 2: Zeroize the two arrays b and c and set b[0] and c[0] to 1
+ 			 */
+-			d = (int) state->epsilon[thread_state->thread_id][i * M + j];
+-			for (k = 1; k <= L; k++) {
+-				d += state->linear_c[thread_state->thread_id][k] *
+-						state->epsilon[thread_state->thread_id][i * M + j - k];
+-			}
++			memset(state->linear_b[thread_state->thread_id], 0, M * sizeof(state->linear_b[thread_state->thread_id][0]));
++			memset(state->linear_c[thread_state->thread_id], 0, M * sizeof(state->linear_c[thread_state->thread_id][0]));
++			state->linear_c[thread_state->thread_id][0] = 1;
++			state->linear_b[thread_state->thread_id][0] = 1;
+ 
+-			d = d % 2;
+-			if (d == 1) {
++			/*
++			 * Sub-step 3: initialize L and m to their initial values
++			 */
++			L = 0;
++			m = -1;
+ 
+-				/*
+-				 * Sub-step 4b: let t be a copy of c
+-				 */
+-				memcpy(state->linear_t[thread_state->thread_id], state->linear_c[thread_state->thread_id],
+-				       M * sizeof(state->linear_t[thread_state->thread_id][0]));
++			/*
++			 * NOTE: j is the N of the algorithm instructions
++			 * 	 M is the n of the algorithm instructions
++			 */
++			for (j = 0; j < M; j++) {
+ 
+ 				/*
+-				 * Sub-step 4c: update c array
++				 * Sub-step 4a: set the discrepancy
+ 				 */
+-				for (k = j - m; k < M; k++) {
+-					state->linear_c[thread_state->thread_id][k] =
+-							(BitSequence) ((state->linear_c[thread_state->thread_id][k] +
+-									state->linear_b[thread_state->thread_id][k - j + m]) % 2);
++				d = (int) state->epsilon[thread_state->thread_id][i * M + j];
++				for (k = 1; k <= L; k++) {
++					d += state->linear_c[thread_state->thread_id][k] *
++							state->epsilon[thread_state->thread_id][i * M + j - k];
+ 				}
+ 
+-				/*
+-				 * Sub-step 4d: update L, M and b
+-				 */
+-				if (L <= j / 2) {
+-					L = j + 1 - L;
+-					m = j;
+-					memcpy(state->linear_b[thread_state->thread_id], state->linear_t[thread_state->thread_id],
+-					       M * sizeof(state->linear_b[thread_state->thread_id][0]));
++				d = d % 2;
++				if (d == 1) {
++
++					/*
++					 * Sub-step 4b: let t be a copy of c
++					 */
++					memcpy(state->linear_t[thread_state->thread_id], state->linear_c[thread_state->thread_id],
++					       M * sizeof(state->linear_t[thread_state->thread_id][0]));
++
++					/*
++					 * Sub-step 4c: update c array
++					 */
++					for (k = j - m; k < M; k++) {
++						state->linear_c[thread_state->thread_id][k] =
++								(BitSequence) ((state->linear_c[thread_state->thread_id][k] +
++										state->linear_b[thread_state->thread_id][k - j + m]) % 2);
++					}
++
++					/*
++					 * Sub-step 4d: update L, M and b
++					 */
++					if (L <= j / 2) {
++						L = j + 1 - L;
++						m = j;
++						memcpy(state->linear_b[thread_state->thread_id], state->linear_t[thread_state->thread_id],
++						       M * sizeof(state->linear_b[thread_state->thread_id][0]));
++					}
+ 				}
+ 			}
+-		}
+ 
++		}
+ 		/*
+ 		 * Step 3: calculate the theoretical mean
+ 		 * NOTE: the conditional operator is checking if (M + 1) is even or odd
+diff --git a/src/tests/longestRunOfOnes.c b/src/tests/longestRunOfOnes.c
+index b93c5a2..1ea722e 100644
+--- a/src/tests/longestRunOfOnes.c
++++ b/src/tests/longestRunOfOnes.c
+@@ -37,6 +37,7 @@
+ #include "../utils/cephes.h"
+ #include "../utils/utilities.h"
+ #include "../utils/debug.h"
++#include "../utils/packed.h"
+ 
+ 
+ /*
+@@ -319,6 +320,7 @@ LongestRunOfOnes_iterate(struct thread_state *thread_state)
+ 	long int run;		// Counter used to find longest run of ones
+ 	long int i;
+ 	long int j;
++	bool packed_run;
+ 
+ 	/*
+ 	 * Check preconditions (firewall)
+@@ -345,6 +347,10 @@ LongestRunOfOnes_iterate(struct thread_state *thread_state)
+ 	 * Collect parameters from state
+ 	 */
+ 	n = state->tp.n;
++	packed_run = state->epsilon_words != NULL &&
++		state->epsilon_words[thread_state->thread_id] != NULL &&
++		state->walk_summary != NULL &&
++		state->walk_summary[thread_state->thread_id].invalid == 0;
+ 
+ 	/*
+ 	 * Find the appropriate runs_table entry that first satisfies the min_n requirement
+@@ -381,19 +387,22 @@ LongestRunOfOnes_iterate(struct thread_state *thread_state)
+ 		/*
+ 		 * Step 2a: determine maximum 1-bit run length for this block
+ 		 */
+-		v_obs = 0;
+-		run = 0;
+-		for (j = 0; j < stat.M; j++) {
+-			if (state->epsilon[thread_state->thread_id][(i * stat.M) + j] == 1) {
+-				run++;
+-				if (run > v_obs) {
+-					v_obs = run;
++		if (packed_run) {
++			v_obs = sts_packed_longest_run(state->epsilon_words[thread_state->thread_id],
++						       i * stat.M, stat.M);
++		} else {
++			v_obs = 0;
++			run = 0;
++			for (j = 0; j < stat.M; j++) {
++				if (state->epsilon[thread_state->thread_id][(i * stat.M) + j] == 1) {
++					run++;
++					if (run > v_obs)
++						v_obs = run;
++				} else {
++					run = 0;
+ 				}
+-			} else {
+-				run = 0;
+ 			}
+ 		}
+-
+ 		/*
+ 		 * Step 2b: count the class based on the current run length
+ 		 */
+diff --git a/src/tests/universal.c b/src/tests/universal.c
+index 584a648..6d3f96c 100644
+--- a/src/tests/universal.c
++++ b/src/tests/universal.c
+@@ -38,6 +38,7 @@
+ #include "../utils/utilities.h"
+ #include "../utils/cephes.h"
+ #include "../utils/debug.h"
++#include "../utils/packed.h"
+ 
+ 
+ /*
+@@ -197,6 +198,19 @@ Universal_init(struct state *state)
+ 	 */
+ 	state->universal_L = L;
+ 	p = (long int) 1 << L;
++	state->universal_logdist = NULL;
++	if (p <= LONG_MAX / 1010 && 1010 * p <= 1048576) {
++		long int max_distance = 1010 * p;
++		state->universal_logdist = malloc((size_t)(max_distance + 1) *
++						       sizeof(*state->universal_logdist));
++		if (state->universal_logdist != NULL) {
++			long int distance;
++			state->universal_logdist[0] = 0.0;
++			for (distance = 1; distance <= max_distance; ++distance)
++				state->universal_logdist[distance] =
++					log((double) distance) / state->c.log2;
++		}
++	}
+ 
+ 	/*
+ 	 * Allocate the T table (with block number of the last occurrence of each block) for each thread
+@@ -267,6 +281,8 @@ Universal_iterate(struct thread_state *thread_state)
+ 	long decRep;		// Decimal representation of a block
+ 	long int i;
+ 	long int j;
++	bool packed_blocks;
++	long int distance;
+ 
+ 	/*
+ 	 * Check preconditions (firewall)
+@@ -304,6 +320,10 @@ Universal_iterate(struct thread_state *thread_state)
+ 	 */
+ 	L = state->universal_L;
+ 	T = state->universal_T[thread_state->thread_id];
++	packed_blocks = state->epsilon_words != NULL &&
++		state->epsilon_words[thread_state->thread_id] != NULL &&
++		state->walk_summary != NULL &&
++		state->walk_summary[thread_state->thread_id].invalid == 0;
+ 
+ 	/*
+ 	 * Check preconditions (firewall)
+@@ -337,9 +357,14 @@ Universal_iterate(struct thread_state *thread_state)
+ 		 * It is convenient to use this representation because we can store and
+ 		 * have access to the contents of each block in the table T with size 2^L.
+ 		 */
+-		decRep = 0;
+-		for (j = 0; j < L; j++) {
+-			decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
++		if (packed_blocks) {
++			decRep = (long) sts_packed_extract_bits(state->epsilon_words[thread_state->thread_id],
++						       (i - 1) * L, (unsigned int)L);
++		} else {
++			decRep = 0;
++			for (j = 0; j < L; j++) {
++				decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
++			}
+ 		}
+ 
+ 		/*
+@@ -357,16 +382,25 @@ Universal_iterate(struct thread_state *thread_state)
+ 		/*
+ 		 * Get decimal representation of the block
+ 		 */
+-		decRep = 0;
+-		for (j = 0; j < L; j++) {
+-			decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
++		if (packed_blocks) {
++			decRep = (long) sts_packed_extract_bits(state->epsilon_words[thread_state->thread_id],
++						       (i - 1) * L, (unsigned int)L);
++		} else {
++			decRep = 0;
++			for (j = 0; j < L; j++) {
++				decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
++			}
+ 		}
+ 
+ 		/*
+ 		 * Add the distance between re-occurrences of the same L-bit block to an
+ 		 * accumulating log2 sum of all the differences detected in the K blocks
+ 		 */
+-		stat.sum += log(i - T[decRep]) / state->c.log2;
++		distance = i - T[decRep];
++		if (state->universal_logdist != NULL)
++			stat.sum += state->universal_logdist[distance];
++		else
++			stat.sum += log(distance) / state->c.log2;
+ 
+ 		/*
+ 		 * Replace the value in the table with the location of the current block
+@@ -1183,6 +1217,8 @@ Universal_destroy(struct state *state)
+ 		free(state->universal_T);
+ 		state->universal_T = NULL;
+ 	}
++	free(state->universal_logdist);
++	state->universal_logdist = NULL;
+ 
+ 	return;
+ }
+diff --git a/src/utils/defs.h b/src/utils/defs.h
+index 1b611ec..56d2125 100644
+--- a/src/utils/defs.h
++++ b/src/utils/defs.h
+@@ -506,6 +506,7 @@ struct state {
+ 	uint64_t **epsilon_words;		// MSB-first packed stream, per worker
+ 	long int *epsilon_ones;		// Number of one bits, per worker
+ 	struct sts_walk_summary *walk_summary;	// +/-1 walk summary, per worker
++	double *universal_logdist;	// Shared log2(distance) table for TEST_UNIVERSAL
+ };
+ 
+ struct thread_state {
+diff --git a/src/utils/driver.c b/src/utils/driver.c
+index 72cc0b5..7b6ff92 100644
+--- a/src/utils/driver.c
++++ b/src/utils/driver.c
+@@ -382,7 +382,9 @@ init(struct state *state)
+ 	    state->testVector[TEST_RND_EXCURSION] || state->testVector[TEST_RND_EXCURSION_VAR] ||
+ 	    state->testVector[TEST_APEN] || state->testVector[TEST_SERIAL] ||
+ 	    state->testVector[TEST_RANK] ||
+-	    state->testVector[TEST_NON_OVERLAPPING] || state->testVector[TEST_OVERLAPPING]) {
++	    state->testVector[TEST_NON_OVERLAPPING] || state->testVector[TEST_OVERLAPPING] ||
++	    state->testVector[TEST_LONGEST_RUN] || state->testVector[TEST_DFT] ||
++	    state->testVector[TEST_UNIVERSAL] || state->testVector[TEST_LINEARCOMPLEXITY]) {
+ 		size_t packed_words = (size_t) (state->tp.n / 64) + (state->tp.n % 64 != 0) + 2;
+ 		state->epsilon_words = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_words));
+ 		state->epsilon_ones = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_ones));
+diff --git a/src/utils/packed.c b/src/utils/packed.c
+index f74f824..e48c295 100644
+--- a/src/utils/packed.c
++++ b/src/utils/packed.c
+@@ -518,3 +518,167 @@ sts_packed_runs(const uint64_t *words, long int n)
+ 
+ 	return transitions + 1;
+ }
++
++/* Read up to 64 consecutive MSB-first bits, returned in the high bits. */
++static uint64_t
++sts_packed_read64(const uint64_t *words, long int first)
++{
++	long int wi = first >> 6;
++	unsigned int off = (unsigned int)(first & 63);
++	uint64_t value = words[wi];
++
++	if (off != 0)
++		value = (value << off) | (words[wi + 1] >> (64U - off));
++	return value;
++}
++
++uint64_t
++sts_packed_extract_bits(const uint64_t *words, long int first, unsigned int count)
++{
++	uint64_t value;
++
++	if (words == NULL || first < 0 || count == 0 || count > 64)
++		return 0;
++	value = sts_packed_read64(words, first);
++	return (count == 64) ? value : (value >> (64U - count));
++}
++
++/* Byte summary: prefix ones in bits 7..0, suffix ones, and max run. */
++static const uint16_t sts_run_byte[256] = {
++	0x000, 0x110, 0x100, 0x220, 0x100, 0x110, 0x200, 0x330, 0x100, 0x110, 0x100, 0x220, 0x200, 0x210, 0x300, 0x440,
++	0x100, 0x110, 0x100, 0x220, 0x100, 0x110, 0x200, 0x330, 0x200, 0x210, 0x200, 0x220, 0x300, 0x310, 0x400, 0x550,
++	0x100, 0x110, 0x100, 0x220, 0x100, 0x110, 0x200, 0x330, 0x100, 0x110, 0x100, 0x220, 0x200, 0x210, 0x300, 0x440,
++	0x200, 0x210, 0x200, 0x220, 0x200, 0x210, 0x200, 0x330, 0x300, 0x310, 0x300, 0x320, 0x400, 0x410, 0x500, 0x660,
++	0x100, 0x110, 0x100, 0x220, 0x100, 0x110, 0x200, 0x330, 0x100, 0x110, 0x100, 0x220, 0x200, 0x210, 0x300, 0x440,
++	0x100, 0x110, 0x100, 0x220, 0x100, 0x110, 0x200, 0x330, 0x200, 0x210, 0x200, 0x220, 0x300, 0x310, 0x400, 0x550,
++	0x200, 0x210, 0x200, 0x220, 0x200, 0x210, 0x200, 0x330, 0x200, 0x210, 0x200, 0x220, 0x200, 0x210, 0x300, 0x440,
++	0x300, 0x310, 0x300, 0x320, 0x300, 0x310, 0x300, 0x330, 0x400, 0x410, 0x400, 0x420, 0x500, 0x510, 0x600, 0x770,
++	0x101, 0x111, 0x101, 0x221, 0x101, 0x111, 0x201, 0x331, 0x101, 0x111, 0x101, 0x221, 0x201, 0x211, 0x301, 0x441,
++	0x101, 0x111, 0x101, 0x221, 0x101, 0x111, 0x201, 0x331, 0x201, 0x211, 0x201, 0x221, 0x301, 0x311, 0x401, 0x551,
++	0x101, 0x111, 0x101, 0x221, 0x101, 0x111, 0x201, 0x331, 0x101, 0x111, 0x101, 0x221, 0x201, 0x211, 0x301, 0x441,
++	0x201, 0x211, 0x201, 0x221, 0x201, 0x211, 0x201, 0x331, 0x301, 0x311, 0x301, 0x321, 0x401, 0x411, 0x501, 0x661,
++	0x202, 0x212, 0x202, 0x222, 0x202, 0x212, 0x202, 0x332, 0x202, 0x212, 0x202, 0x222, 0x202, 0x212, 0x302, 0x442,
++	0x202, 0x212, 0x202, 0x222, 0x202, 0x212, 0x202, 0x332, 0x202, 0x212, 0x202, 0x222, 0x302, 0x312, 0x402, 0x552,
++	0x303, 0x313, 0x303, 0x323, 0x303, 0x313, 0x303, 0x333, 0x303, 0x313, 0x303, 0x323, 0x303, 0x313, 0x303, 0x443,
++	0x404, 0x414, 0x404, 0x424, 0x404, 0x414, 0x404, 0x434, 0x505, 0x515, 0x505, 0x525, 0x606, 0x616, 0x707, 0x888,
++};
++
++/* Longest run of ones in [first, first + count), without unpacking bytes. */
++long int
++sts_packed_longest_run(const uint64_t *words, long int first, long int count)
++{
++	long int best = 0;
++	long int current = 0;
++	long int pos = first;
++	long int left = count;
++
++	if (words == NULL || first < 0 || count <= 0)
++		return 0;
++	while (left > 0) {
++		unsigned int take = (left >= 64) ? 64U : (unsigned int)left;
++		unsigned int bytes = (take + 7U) / 8U;
++		unsigned int b;
++		uint64_t value = sts_packed_read64(words, pos);
++
++		if (take < 64)
++			value &= UINT64_MAX << (64U - take);
++		for (b = 0; b < bytes; ++b) {
++			unsigned int byte = (unsigned int)(value >> (56U - 8U * b)) & 0xffU;
++			uint16_t summary = sts_run_byte[byte];
++			long int candidate = current + (long int)(summary & 0x0fU);
++			long int inner = (long int)((summary >> 8) & 0x0fU);
++
++			if (candidate > best)
++				best = candidate;
++			if (inner > best)
++				best = inner;
++			if (byte == 0xffU)
++				current += 8;
++			else
++				current = (long int)((summary >> 4) & 0x0fU);
++		}
++		pos += take;
++		left -= take;
++	}
++	return best;
++}
++
++/* Bit-parallel Berlekamp-Massey over F2; returns the scalar algorithm's L. */
++long int
++sts_packed_linear_complexity(const uint64_t *words, long int first, long int length)
++{
++	long int L = 0;
++	long int m = -1;
++	long int j;
++	size_t nw;
++	size_t w;
++	uint64_t last_mask;
++	/* MAX_M_LINEARCOMPLEXITY is 5000; this is a bounded 2.5 KiB workspace. */
++	uint64_t storage[4 * ((MAX_M_LINEARCOMPLEXITY + 63) / 64)];
++	uint64_t *b = storage;
++	uint64_t *c;
++	uint64_t *t;
++	uint64_t *history;
++
++	if (words == NULL || first < 0 || length <= 0 || length > MAX_M_LINEARCOMPLEXITY)
++		return -1;
++	nw = (size_t)((length + 63) / 64);
++	c = b + nw;
++	t = c + nw;
++	history = t + nw;
++	last_mask = (length & 63)
++		? ((UINT64_C(1) << (length & 63)) - 1) : UINT64_MAX;
++	memset(b, 0, nw * sizeof(*b));
++	memset(c, 0, nw * sizeof(*c));
++	memset(t, 0, nw * sizeof(*t));
++	memset(history, 0, nw * sizeof(*history));
++	b[0] = 1;
++	c[0] = 1;
++
++	for (j = 0; j < length; ++j) {
++		long int bitpos = first + j;
++		unsigned int input_bit = (unsigned int)((words[bitpos >> 6] >> (63 - (bitpos & 63))) & 1U);
++		unsigned int discrepancy = input_bit;
++		unsigned int parity = 0;
++		size_t coeff_words = (size_t)(L / 64) + 1;
++
++		if (coeff_words > nw)
++			coeff_words = nw;
++		/* C[1..L] dotted with the previous input bits, modulo two. */
++		for (w = 0; w < coeff_words; ++w) {
++			uint64_t coefficients = c[w] >> 1;
++			if (w + 1 < nw)
++				coefficients |= c[w + 1] << 63;
++			parity ^= sts_popcount64(coefficients & history[w]) & 1U;
++		}
++		discrepancy ^= parity;
++
++		if (discrepancy != 0) {
++			long int shift = j - m;
++			size_t word_shift = (size_t)(shift >> 6);
++			unsigned int bit_shift = (unsigned int)(shift & 63);
++
++			memcpy(t, c, nw * sizeof(*c));
++			for (w = word_shift; w < nw; ++w) {
++				size_t src = w - word_shift;
++				uint64_t shifted = b[src] << bit_shift;
++				if (bit_shift != 0 && src != 0)
++					shifted |= b[src - 1] >> (64U - bit_shift);
++				c[w] ^= shifted;
++			}
++			c[nw - 1] &= last_mask;
++			if (L <= j / 2) {
++				L = j + 1 - L;
++				m = j;
++				memcpy(b, t, nw * sizeof(*b));
++			}
++		}
++
++		/* history bit k-1 is the input bit at j-k. */
++		for (w = nw; w-- > 1;)
++			history[w] = (history[w] << 1) | (history[w - 1] >> 63);
++		history[0] = (history[0] << 1) | input_bit;
++	}
++	return L;
++}
++
+diff --git a/src/utils/packed.h b/src/utils/packed.h
+index 000b8b7..19ce5be 100644
+--- a/src/utils/packed.h
++++ b/src/utils/packed.h
+@@ -12,6 +12,12 @@ long int sts_packed_range_ones(const uint64_t *words, long int first, long int c
+ 
+ /* Number of runs in the first n bits (1 for every non-empty stream). */
+ long int sts_packed_runs(const uint64_t *words, long int n);
++/* Extract count MSB-first packed bits beginning at first (1 <= count <= 64). */
++uint64_t sts_packed_extract_bits(const uint64_t *words, long int first, unsigned int count);
++/* Longest run of ones in a packed bit range. */
++long int sts_packed_longest_run(const uint64_t *words, long int first, long int count);
++/* Binary Berlekamp-Massey linear complexity for one packed block. */
++long int sts_packed_linear_complexity(const uint64_t *words, long int first, long int length);
+ /* Rank of one 32x32 matrix beginning at bit offset first (MSB-first).
+  * Returns -1 for invalid arguments. */
+ int sts_packed_rank32(const uint64_t *words, long int first);
+diff --git a/src/utils/parse_args.c b/src/utils/parse_args.c
+index a7d9588..afd32ed 100644
+--- a/src/utils/parse_args.c
++++ b/src/utils/parse_args.c
+@@ -289,6 +289,7 @@ static struct state const defaultstate = {
+ 	NULL,	// epsilon_words
+ 	NULL,	// epsilon_ones
+ 	NULL,	// walk_summary
++	NULL,	// universal_logdist
+ /* *INDENT-ON* */
+ };
+ 
+-- 
+2.34.1
+

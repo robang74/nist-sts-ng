@@ -37,6 +37,7 @@
 #include "../utils/cephes.h"
 #include "../utils/utilities.h"
 #include "../utils/debug.h"
+#include "../utils/packed.h"
 
 
 /*
@@ -319,6 +320,7 @@ LongestRunOfOnes_iterate(struct thread_state *thread_state)
 	long int run;		// Counter used to find longest run of ones
 	long int i;
 	long int j;
+	bool packed_run;
 
 	/*
 	 * Check preconditions (firewall)
@@ -345,6 +347,10 @@ LongestRunOfOnes_iterate(struct thread_state *thread_state)
 	 * Collect parameters from state
 	 */
 	n = state->tp.n;
+	packed_run = state->epsilon_words != NULL &&
+		state->epsilon_words[thread_state->thread_id] != NULL &&
+		state->walk_summary != NULL &&
+		state->walk_summary[thread_state->thread_id].invalid == 0;
 
 	/*
 	 * Find the appropriate runs_table entry that first satisfies the min_n requirement
@@ -381,19 +387,22 @@ LongestRunOfOnes_iterate(struct thread_state *thread_state)
 		/*
 		 * Step 2a: determine maximum 1-bit run length for this block
 		 */
-		v_obs = 0;
-		run = 0;
-		for (j = 0; j < stat.M; j++) {
-			if (state->epsilon[thread_state->thread_id][(i * stat.M) + j] == 1) {
-				run++;
-				if (run > v_obs) {
-					v_obs = run;
+		if (packed_run) {
+			v_obs = sts_packed_longest_run(state->epsilon_words[thread_state->thread_id],
+						       i * stat.M, stat.M);
+		} else {
+			v_obs = 0;
+			run = 0;
+			for (j = 0; j < stat.M; j++) {
+				if (state->epsilon[thread_state->thread_id][(i * stat.M) + j] == 1) {
+					run++;
+					if (run > v_obs)
+						v_obs = run;
+				} else {
+					run = 0;
 				}
-			} else {
-				run = 0;
 			}
 		}
-
 		/*
 		 * Step 2b: count the class based on the current run length
 		 */

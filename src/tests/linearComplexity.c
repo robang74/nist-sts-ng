@@ -37,6 +37,7 @@
 #include "../utils/cephes.h"
 #include "../utils/utilities.h"
 #include "../utils/debug.h"
+#include "../utils/packed.h"
 
 
 /*
@@ -230,6 +231,7 @@ LinearComplexity_iterate(struct thread_state *thread_state)
 	long int i;
 	long int j;
 	long int k;
+	bool packed_bm;
 
 	/*
 	 * Check preconditions (firewall)
@@ -276,6 +278,10 @@ LinearComplexity_iterate(struct thread_state *thread_state)
 	M = state->tp.linearComplexitySequenceLength;
 	n = state->tp.n;
 	N = n / M;
+	packed_bm = state->epsilon_words != NULL &&
+		state->epsilon_words[thread_state->thread_id] != NULL &&
+		state->walk_summary != NULL &&
+		state->walk_summary[thread_state->thread_id].invalid == 0;
 
 	/*
 	 * Zeroize the v counters
@@ -290,65 +296,70 @@ LinearComplexity_iterate(struct thread_state *thread_state)
 	 */
 	for (i = 0; i < N; i++) {
 
-		/*
-		 * Sub-step 2: Zeroize the two arrays b and c and set b[0] and c[0] to 1
-		 */
-		memset(state->linear_b[thread_state->thread_id], 0, M * sizeof(state->linear_b[thread_state->thread_id][0]));
-		memset(state->linear_c[thread_state->thread_id], 0, M * sizeof(state->linear_c[thread_state->thread_id][0]));
-		state->linear_c[thread_state->thread_id][0] = 1;
-		state->linear_b[thread_state->thread_id][0] = 1;
-
-		/*
-		 * Sub-step 3: initialize L and m to their initial values
-		 */
-		L = 0;
-		m = -1;
-
-		/*
-		 * NOTE: j is the N of the algorithm instructions
-		 * 	 M is the n of the algorithm instructions
-		 */
-		for (j = 0; j < M; j++) {
+		if (packed_bm) {
+			L = sts_packed_linear_complexity(state->epsilon_words[thread_state->thread_id],
+						 i * M, M);
+		} else {
+			/*
+			 * Sub-step 2: Zeroize the two arrays b and c and set b[0] and c[0] to 1
+			 */
+			memset(state->linear_b[thread_state->thread_id], 0, M * sizeof(state->linear_b[thread_state->thread_id][0]));
+			memset(state->linear_c[thread_state->thread_id], 0, M * sizeof(state->linear_c[thread_state->thread_id][0]));
+			state->linear_c[thread_state->thread_id][0] = 1;
+			state->linear_b[thread_state->thread_id][0] = 1;
 
 			/*
-			 * Sub-step 4a: set the discrepancy
+			 * Sub-step 3: initialize L and m to their initial values
 			 */
-			d = (int) state->epsilon[thread_state->thread_id][i * M + j];
-			for (k = 1; k <= L; k++) {
-				d += state->linear_c[thread_state->thread_id][k] *
-						state->epsilon[thread_state->thread_id][i * M + j - k];
-			}
+			L = 0;
+			m = -1;
 
-			d = d % 2;
-			if (d == 1) {
-
-				/*
-				 * Sub-step 4b: let t be a copy of c
-				 */
-				memcpy(state->linear_t[thread_state->thread_id], state->linear_c[thread_state->thread_id],
-				       M * sizeof(state->linear_t[thread_state->thread_id][0]));
+			/*
+			 * NOTE: j is the N of the algorithm instructions
+			 * 	 M is the n of the algorithm instructions
+			 */
+			for (j = 0; j < M; j++) {
 
 				/*
-				 * Sub-step 4c: update c array
+				 * Sub-step 4a: set the discrepancy
 				 */
-				for (k = j - m; k < M; k++) {
-					state->linear_c[thread_state->thread_id][k] =
-							(BitSequence) ((state->linear_c[thread_state->thread_id][k] +
-									state->linear_b[thread_state->thread_id][k - j + m]) % 2);
+				d = (int) state->epsilon[thread_state->thread_id][i * M + j];
+				for (k = 1; k <= L; k++) {
+					d += state->linear_c[thread_state->thread_id][k] *
+							state->epsilon[thread_state->thread_id][i * M + j - k];
 				}
 
-				/*
-				 * Sub-step 4d: update L, M and b
-				 */
-				if (L <= j / 2) {
-					L = j + 1 - L;
-					m = j;
-					memcpy(state->linear_b[thread_state->thread_id], state->linear_t[thread_state->thread_id],
-					       M * sizeof(state->linear_b[thread_state->thread_id][0]));
+				d = d % 2;
+				if (d == 1) {
+
+					/*
+					 * Sub-step 4b: let t be a copy of c
+					 */
+					memcpy(state->linear_t[thread_state->thread_id], state->linear_c[thread_state->thread_id],
+					       M * sizeof(state->linear_t[thread_state->thread_id][0]));
+
+					/*
+					 * Sub-step 4c: update c array
+					 */
+					for (k = j - m; k < M; k++) {
+						state->linear_c[thread_state->thread_id][k] =
+								(BitSequence) ((state->linear_c[thread_state->thread_id][k] +
+										state->linear_b[thread_state->thread_id][k - j + m]) % 2);
+					}
+
+					/*
+					 * Sub-step 4d: update L, M and b
+					 */
+					if (L <= j / 2) {
+						L = j + 1 - L;
+						m = j;
+						memcpy(state->linear_b[thread_state->thread_id], state->linear_t[thread_state->thread_id],
+						       M * sizeof(state->linear_b[thread_state->thread_id][0]));
+					}
 				}
 			}
+
 		}
-
 		/*
 		 * Step 3: calculate the theoretical mean
 		 * NOTE: the conditional operator is checking if (M + 1) is even or odd

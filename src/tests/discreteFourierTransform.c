@@ -323,13 +323,21 @@ DiscreteFourierTransform_iterate(struct thread_state *thread_state)
 	/*
 	 * Step 1: initialize X for this iteration
 	 */
-	for (i = 0; i < n; i++) {
-		if ((int) state->epsilon[thread_state->thread_id][i] == 1) {
-			X[i] = 1;
-		} else if ((int) state->epsilon[thread_state->thread_id][i] == 0) {
-			X[i] = -1;
-		} else {
-			err(41, __func__, "found a bit different than 1 or 0 in the sequence");
+	if (state->walk_summary != NULL &&
+	    state->walk_summary[thread_state->thread_id].invalid == 0) {
+		/* Binary input is known: this simple conversion is vectorizable. */
+		for (i = 0; i < n; i++)
+			X[i] = (double) state->epsilon[thread_state->thread_id][i] * 2.0 - 1.0;
+	} else {
+		/* Preserve the original validation and error behavior for other bytes. */
+		for (i = 0; i < n; i++) {
+			if ((int) state->epsilon[thread_state->thread_id][i] == 1) {
+				X[i] = 1;
+			} else if ((int) state->epsilon[thread_state->thread_id][i] == 0) {
+				X[i] = -1;
+			} else {
+				err(41, __func__, "found a bit different than 1 or 0 in the sequence");
+			}
 		}
 	}
 

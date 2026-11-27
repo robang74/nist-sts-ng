@@ -12,6 +12,12 @@ long int sts_packed_range_ones(const uint64_t *words, long int first, long int c
 
 /* Number of runs in the first n bits (1 for every non-empty stream). */
 long int sts_packed_runs(const uint64_t *words, long int n);
+/* Extract count MSB-first packed bits beginning at first (1 <= count <= 64). */
+uint64_t sts_packed_extract_bits(const uint64_t *words, long int first, unsigned int count);
+/* Longest run of ones in a packed bit range. */
+long int sts_packed_longest_run(const uint64_t *words, long int first, long int count);
+/* Binary Berlekamp-Massey linear complexity for one packed block. */
+long int sts_packed_linear_complexity(const uint64_t *words, long int first, long int length);
 /* Rank of one 32x32 matrix beginning at bit offset first (MSB-first).
  * Returns -1 for invalid arguments. */
 int sts_packed_rank32(const uint64_t *words, long int first);

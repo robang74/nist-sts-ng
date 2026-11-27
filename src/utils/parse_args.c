@@ -289,6 +289,7 @@ static struct state const defaultstate = {
 	NULL,	// epsilon_words
 	NULL,	// epsilon_ones
 	NULL,	// walk_summary
+	NULL,	// universal_logdist
 /* *INDENT-ON* */
 };
 

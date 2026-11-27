@@ -38,6 +38,7 @@
 #include "../utils/utilities.h"
 #include "../utils/cephes.h"
 #include "../utils/debug.h"
+#include "../utils/packed.h"
 
 
 /*
@@ -197,6 +198,19 @@ Universal_init(struct state *state)
 	 */
 	state->universal_L = L;
 	p = (long int) 1 << L;
+	state->universal_logdist = NULL;
+	if (p <= LONG_MAX / 1010 && 1010 * p <= 1048576) {
+		long int max_distance = 1010 * p;
+		state->universal_logdist = malloc((size_t)(max_distance + 1) *
+						       sizeof(*state->universal_logdist));
+		if (state->universal_logdist != NULL) {
+			long int distance;
+			state->universal_logdist[0] = 0.0;
+			for (distance = 1; distance <= max_distance; ++distance)
+				state->universal_logdist[distance] =
+					log((double) distance) / state->c.log2;
+		}
+	}
 
 	/*
 	 * Allocate the T table (with block number of the last occurrence of each block) for each thread
@@ -267,6 +281,8 @@ Universal_iterate(struct thread_state *thread_state)
 	long decRep;		// Decimal representation of a block
 	long int i;
 	long int j;
+	bool packed_blocks;
+	long int distance;
 
 	/*
 	 * Check preconditions (firewall)
@@ -304,6 +320,10 @@ Universal_iterate(struct thread_state *thread_state)
 	 */
 	L = state->universal_L;
 	T = state->universal_T[thread_state->thread_id];
+	packed_blocks = state->epsilon_words != NULL &&
+		state->epsilon_words[thread_state->thread_id] != NULL &&
+		state->walk_summary != NULL &&
+		state->walk_summary[thread_state->thread_id].invalid == 0;
 
 	/*
 	 * Check preconditions (firewall)
@@ -337,9 +357,14 @@ Universal_iterate(struct thread_state *thread_state)
 		 * It is convenient to use this representation because we can store and
 		 * have access to the contents of each block in the table T with size 2^L.
 		 */
-		decRep = 0;
-		for (j = 0; j < L; j++) {
-			decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
+		if (packed_blocks) {
+			decRep = (long) sts_packed_extract_bits(state->epsilon_words[thread_state->thread_id],
+						       (i - 1) * L, (unsigned int)L);
+		} else {
+			decRep = 0;
+			for (j = 0; j < L; j++) {
+				decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
+			}
 		}
 
 		/*
@@ -357,16 +382,25 @@ Universal_iterate(struct thread_state *thread_state)
 		/*
 		 * Get decimal representation of the block
 		 */
-		decRep = 0;
-		for (j = 0; j < L; j++) {
-			decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
+		if (packed_blocks) {
+			decRep = (long) sts_packed_extract_bits(state->epsilon_words[thread_state->thread_id],
+						       (i - 1) * L, (unsigned int)L);
+		} else {
+			decRep = 0;
+			for (j = 0; j < L; j++) {
+				decRep += state->epsilon[thread_state->thread_id][(i - 1) * L + j] * ((long int) 1 << (L - 1 - j));
+			}
 		}
 
 		/*
 		 * Add the distance between re-occurrences of the same L-bit block to an
 		 * accumulating log2 sum of all the differences detected in the K blocks
 		 */
-		stat.sum += log(i - T[decRep]) / state->c.log2;
+		distance = i - T[decRep];
+		if (state->universal_logdist != NULL)
+			stat.sum += state->universal_logdist[distance];
+		else
+			stat.sum += log(distance) / state->c.log2;
 
 		/*
 		 * Replace the value in the table with the location of the current block
@@ -1183,6 +1217,8 @@ Universal_destroy(struct state *state)
 		free(state->universal_T);
 		state->universal_T = NULL;
 	}
+	free(state->universal_logdist);
+	state->universal_logdist = NULL;
 
 	return;
 }
