@@ -63,7 +63,7 @@ def transform_driver(text: str, path: Path) -> str:
 
 
 def transform_packed_h(text: str, path: Path) -> str:
-    old = "long int sts_packed_runs(const uint64_t *words, long int n);\n#endif /* STS_PACKED_H */"
+    old = "long int sts_packed_runs(const uint64_t *words, long int n);\n\n#endif /* STS_PACKED_H */"
     new = (
         "long int sts_packed_runs(const uint64_t *words, long int n);\n"
         "\n"
@@ -252,7 +252,7 @@ sts_prepare_pattern_histogram(struct state *state, long int thread_id,
     text = replace_once(
         path,
         text,
-        "\twalk = &state->walk_summary[thread_id];\n\t/* Two zero guard words permit future cross-word window extraction. */",
+        "\twalk = &state->walk_summary[thread_id];\n\n\t/* Two zero guard words permit future cross-word window extraction. */",
         "\twalk = &state->walk_summary[thread_id];\n"
         "\tdo_excursion = state->testVector[TEST_RND_EXCURSION];\n"
         "\tdo_variant = state->testVector[TEST_RND_EXCURSION_VAR];\n"
@@ -319,7 +319,7 @@ sts_prepare_pattern_histogram(struct state *state, long int thread_id,
     return text
 
 
-def transform_test(text: str, path: Path, func: str, test_label: str) -> str:
+def transform_test(text: str, path: Path, func: str) -> str:
     text = replace_once(
         path,
         text,
@@ -372,7 +372,7 @@ def main() -> int:
             ("src/tests/approximateEntropy.c", "compute_phi"),
         ):
             path = root / rel
-            transformed[path] = transform_test(read_text(path), path, func, label)
+            transformed[path] = transform_test(read_text(path), path, func)
     except (OSError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
