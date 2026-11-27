@@ -44,9 +44,11 @@ cat result.txt
 docs/SP800-22rev1a-improved.pdf
 ```
 
-### UPDATES
+---
 
-**NOTE: Recent changes to this `README.md` file on 2025 Jan 20**:
+### Updates
+
+NOTE: Recent changes to this `README.md` file on 2025 Jan 20:
 
 * The [Google Drive sts-data folder][generatordata] link has been changed to allow public access.
 * Added a "_p.s._" about LavaRnd at the bottom.
@@ -62,7 +64,9 @@ STS can be useful in:
 - Evaluating the randomness of bitstreams produced by hardware and software key generators for cryptographic applications.
 - Evaluating the quality of pseudo random number generators used in simulation and modeling applications.
 
-### Usage
+---
+
+### Usage (standard)
 
 ### Requirements
 
@@ -94,14 +98,14 @@ When the _number of iterations_ is high, the the results will be more accurate b
 Once you have chosen the data to test and the number of iterations and cloned the repository, `cd` into the sts folder, run `make` and then you can use the program as follows:
 
 ```sh
-$ ./sts -v 1 -i 32 -I 1 -w . -F r /path/to/random/data
+$ ./sts -v 1 -i 8 -I 1 -w . -F r /path/to/random/data
 ```
 
 Here is the meaning of the flags and the argument used in the example command:
 
 ```
 [-v 1] indicates that we want a verbosity level of 1 for the printed output (optional)
-[-i 32] indicates that we want to run 32 iterations (choose bigger numbers when possible)
+[-i 8] indicates that we want to run 32 iterations (choose bigger numbers when possible)
 [-I 1] indicates that we want the program to tell us every time it finishes testing 1 bitstream (optional)
 [-w .] indicates the path of the folder where you want to store the testing results
 [-F r] indicates that that data will be read as raw binary data (a --> files of ASCII '0'/'1' characters)
@@ -119,7 +123,11 @@ Job number (`-j jobnum`) based seeking into the data is disabled when test data 
 
 __NB__: For more information on the usage run `./sts -h`
 
-### [Advanced] How to run in distributed mode
+---
+
+### Usage (advanced)
+
+### How to run in distributed mode
 
 If you are willing to test a huge dataset (say 1TB  of input data), which could take a long time on a single computer, you might want to try the new STS distributed modes of operation.
 
@@ -140,7 +148,7 @@ the number of the node that you chose in point 2.
 
 This way you can literally split the testing of some big input data among multiple hosts.
 
-#### Example:
+### Example
 
 Consider the case of 32 hosts called `node00`, `node01`, ... `node30`, and `node31` respectively. Assume each host has a copy of the test data under `/random/data` or that `/random` is an NFS mount and all hosts have access to the same data file.
 
@@ -164,14 +172,16 @@ Assume we want to report progress after every 100 iterations.
 Then step 3 says on each host we need execute:
 
 ```sh
-$ ./sts -m i -w /random/work -j __host_number__ -i 819200 -I 100 -v 1 /random/data > /random/work/run.__host_number__ 2>&1
+$ ./sts -m i -w /random/work -j __host_number__ -i 819200 -I 100
+    -v 1 /random/data > /random/work/run.__host_number__ 2>&1
 ```
 
 For example, if we have ssh access to each host, then we can execute:
 
 ```sh
 $ for host in $(seq -w 00 31); do
-ssh node$host nohup /some/path/sts -m i -w /random/work -j $host -i 819200 -I 100 -v 1 /random/data > /random/work/run.$host 2>&1 < /dev/null &
+ssh node$host nohup /some/path/sts -m i -w /random/work -j $host -i 819200 -I 100
+    -v 1 /random/data > /random/work/run.$host 2>&1 < /dev/null &
 done
 ```
 
@@ -198,7 +208,9 @@ The STS version 3 comes with three folders:
 - *docs*: contains the papers explaining the underlying mathematical theory of the suite
 - *tools*: contains some tools we used during the improvement of the suite and the legacy generators' code
 
-## Improvements
+---
+
+### Improvements
 
 Our major improvement starts from source code of the [original source code of version 2.1.2][site] and consists in several bug fixes, code improvements and added documentation. Here are some of our improvements of the 3rd version:
 
@@ -232,12 +244,12 @@ Our major improvement starts from source code of the [original source code of ve
 - Fixed the warnings reported by compilers and lint
 - Fixed memory leaks
 
-## Features to add in the future
+### Features to add in the future
 
 - Graphical visualization of the final p-values in a gnu-plot
 - New (non-approximate) entropy test
 
-## Legacy generators usage
+### Legacy generators usage
 
 In the original NIST code up through 3.1.2 of sts, 9 generators were built into the code. These generators were moved into a standalone tool called generators that is located in the tools directory.
 
@@ -281,7 +293,9 @@ $ ./sts -v 1 -i 1024 -I 32 /tmp/qc2.u8
 
 Refer to the `genall` script in the tools directory for information on how we generated the data in the [Google Drive sts-data folder][generatordata].
 
-## Contributors
+---
+
+### Contributors
 
 The people who have so far contributed to this major improvement of the NIST STS are:
 
@@ -295,13 +309,7 @@ Please feel invited to contribute by creating a pull request to submit the code 
 
 You are very welcome to give us bug fixes and improvements in the form of a [GitHub Pull Request](https://github.com/arcetri/sts/pulls).
 
-## License
-
-The original software was developed at the National Institute of Standards and Technology by employees of the Federal Government in the course of their official duties. Pursuant to title 17 Section 105 of the United States Code this software is not subject to copyright protection and is in the public domain. Furthermore, Cisco's contribution is also placed in the public domain.
-
-The NIST Statistical Test Suite is an experimental system. Neither NIST nor Cisco assume any responsibility whatsoever for its use by other parties, and makes no guarantees, expressed or implied, about its quality, reliability, or any other characteristic. We would appreciate acknowledgment if the software is used.
-
-## Special thanks
+### Special thanks
 
 Special thanks go to the original code developers. Without their efforts this modified code would not have been possible. The original NIST document, [original SP800-22Rev1a paper][original-paper], was extremely valuable to us. Nevertheless we highly recommend using our [improved SP800-22Rev1a paper][improved-paper]!
 
@@ -309,7 +317,17 @@ The above partial list of issues is presented to help explain why we extensively
 
 We also thank the original authors for making their code freely available. We saw the value of their efforts and set about the tasks of extending their code to situations they did not intend.
 
-## LavaRnd p.s.
+---
+
+### License
+
+The original software was developed at the National Institute of Standards and Technology by employees of the Federal Government in the course of their official duties. Pursuant to title 17 Section 105 of the United States Code this software is not subject to copyright protection and is in the public domain. Furthermore, Cisco's contribution is also placed in the public domain.
+
+The NIST Statistical Test Suite is an experimental system. Neither NIST nor Cisco assume any responsibility whatsoever for its use by other parties, and makes no guarantees, expressed or implied, about its quality, reliability, or any other characteristic. We would appreciate acknowledgment if the software is used.
+
+---
+
+### LavaRnd p.s.
 
 For an interest application of STS, see the [Detailed Description of Test Results and Conclusions from LavaRnd](https://lavarand.com/what/nist-test.html). It may be useful to note the _Ranking methodology_ and in particular definition of _proportional failures_ vs. _uniformity failures_.
 
