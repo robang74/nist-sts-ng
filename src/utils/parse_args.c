@@ -838,21 +838,27 @@ parse_args(struct state *state, int argc, char **argv)
 	}
 
 	/*
-	 * If no custom number of threads was set, set the number of threads to be equal to the minimum
-	 * between the number of bitstreams and the logical CPUs available to this process.
+	 * If a custom number of threads was set and this number is greater than the number of processors
+	 * in the computer where sts is running, fire a warning to the user that this will not benefit sts.
 	 */
-	else if (state->numberOfThreadsFlag == false) {
-		state->numberOfThreads = MIN(available_cpus, state->tp.numOfBitStreams);
+	if (state->numberOfThreadsFlag == true
+	&&  state->numberOfThreads > sysconf(_SC_NPROCESSORS_ONLN)*2
+	) {
+		warn(__func__, "You selected a number of threads which is 2x greater than the number of cores (%ld) in this computer."
+#if 0 //RAF: false, when tasks are relatively light 2x cores performs better
+				     " For better performance, you should choose a number of threads =< %ld."
+#endif
+		     , sysconf(_SC_NPROCESSORS_ONLN)*2);
 	}
 
-	/*
-	 * If a custom number of threads was set and this number is greater than the number of logical
-	 * CPUs available to this process, fire a warning that this will usually not benefit sts.
-	 */
-	if (state->numberOfThreadsFlag == true && state->numberOfThreads > available_cpus) {
-		warn(__func__, "You selected more threads than logical CPUs available to this process."
-				     " For better performance, choose a number of threads <= %ld.",
-		     available_cpus);
+	if (state->numberOfThreadsFlag == true
+	&&  state->numberOfThreads < sysconf(_SC_NPROCESSORS_ONLN)/2
+	) {
+		warn(__func__, "You selected a number of threads which is smaller than half the number of cores (%ld) in this computer."
+#if 0 //RAF: performance isn't the only KPI that matters, then just warning
+				     " For better performance, you should choose a number of threads >= %ld."
+#endif
+		     , sysconf(_SC_NPROCESSORS_ONLN)/2);
 	}
 
 	/*

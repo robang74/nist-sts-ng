@@ -61,7 +61,7 @@ CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -pedantic ${LOC_INC} ${DEBUG} ${OPT}
 
 # Keep each persistent worker on one allowed logical CPU by default.
 # Use "make PIN_CPUS=0" to disable CPU affinity for comparison.
-PIN_CPUS ?= 1
+PIN_CPUS ?= 0
 ifeq ($(PIN_CPUS),1)
 CFLAGS += -D_USE_PIN_CPUS
 endif
