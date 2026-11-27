@@ -40,6 +40,9 @@
 #include <limits.h>
 #include <pthread.h>
 #include <unistd.h>
+#if defined(_USE_PIN_CPUS) && defined(__linux__)
+#include <sched.h>
+#endif
 
 // for checking dir
 #include <fcntl.h>
@@ -1487,6 +1490,12 @@ handleFileBasedBitStreams(struct state *state)
 	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	struct thread_state *thread_args = malloc(state->numberOfThreads * sizeof(struct thread_state));
 	void *status;
+#if defined(_USE_PIN_CPUS) && defined(__linux__)
+	cpu_set_t allowed_cpus;
+	int cpu_list[CPU_SETSIZE];
+	int cpu_count = 0;
+	int cpu;
+#endif
 
 	/*
 	 * Check preconditions (firewall)
@@ -1528,6 +1537,25 @@ handleFileBasedBitStreams(struct state *state)
 	}
 
 	/*
+	 * Snapshot the CPUs available to this process. Each persistent worker gets
+	 * one CPU from this list and keeps that affinity for its entire lifetime.
+	 */
+#if defined(_USE_PIN_CPUS) && defined(__linux__)
+	CPU_ZERO(&allowed_cpus);
+	if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
+		for (cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+			if (CPU_ISSET(cpu, &allowed_cpus))
+				cpu_list[cpu_count++] = cpu;
+		}
+	}
+	if (cpu_count == 0) {
+		warn(__func__, "cannot obtain the allowed CPU set; workers will run without pinning");
+	} else {
+		dbg(DBG_MED, "CPU pinning enabled for %d allowed logical CPUs", cpu_count);
+	}
+#endif
+
+	/*
 	 * Initialize and set thread detached attribute
 	 */
 	pthread_attr_init(&attr);
@@ -1542,6 +1570,14 @@ handleFileBasedBitStreams(struct state *state)
 		thread_args[i].global_state = state;
 		thread_args[i].thread_id = i;
 		thread_args[i].mutex = &mutex;
+		thread_args[i].cpu_id = -1;
+
+#if defined(_USE_PIN_CPUS) && defined(__linux__)
+		if (cpu_count > 0)
+			thread_args[i].cpu_id = cpu_list[i % cpu_count];
+		if (thread_args[i].cpu_id >= 0)
+			dbg(DBG_MED, "Assigning worker %ld to logical CPU %d", i, thread_args[i].cpu_id);
+#endif
 
 		io_ret = pthread_create(&thread[i], &attr, testBits, &thread_args[i]);
 		if (io_ret != 0) {
@@ -1595,6 +1631,23 @@ static void
 	if (state == NULL) {
 		err(225, __func__, "state arg is NULL");
 	}
+	/* Pin once: this worker keeps the same logical CPU while it claims and
+	 * processes subsequent iterations from the shared work queue. */
+#if defined(_USE_PIN_CPUS) && defined(__linux__)
+	if (thread_state->cpu_id >= 0) {
+		cpu_set_t worker_cpu;
+		int affinity_error;
+
+		CPU_ZERO(&worker_cpu);
+		CPU_SET(thread_state->cpu_id, &worker_cpu);
+		affinity_error = pthread_setaffinity_np(pthread_self(), sizeof(worker_cpu), &worker_cpu);
+		if (affinity_error != 0)
+			warn(__func__, "thread %ld could not pin to CPU %d: %s; continuing unpinned",
+			     thread_state->thread_id, thread_state->cpu_id, strerror(affinity_error));
+		else
+			dbg(DBG_MED, "Thread %ld pinned to logical CPU %d", thread_state->thread_id, thread_state->cpu_id);
+	}
+#endif
 
 	dbg(DBG_HIGH, "Thread %ld started.", thread_state->thread_id);
 

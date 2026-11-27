@@ -36,6 +36,9 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
+#if defined(_USE_PIN_CPUS) && defined(__linux__)
+#include <sched.h>
+#endif
 #include <dirent.h>
 #include <math.h>
 #include "../utils/externs.h"
@@ -46,6 +49,33 @@
  * Forward static function declarations
  */
 static void change_params(struct state *state, long int parameter, long int value, double d_value);
+
+/*
+ * Return the number of logical CPUs available to this process.
+ * On Linux, sched_getaffinity() also observes taskset/cpuset restrictions.
+ */
+static long int
+getAvailableCPUCount(void)
+{
+	long int count;
+#if defined(_USE_PIN_CPUS) && defined(__linux__)
+	cpu_set_t allowed_cpus;
+	int cpu;
+
+	count = 0;
+	CPU_ZERO(&allowed_cpus);
+	if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
+		for (cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+			if (CPU_ISSET(cpu, &allowed_cpus))
+				++count;
+		}
+		if (count > 0)
+			return count;
+	}
+#endif
+	count = sysconf(_SC_NPROCESSORS_ONLN);
+	return (count > 0) ? count : 1;
+}
 
 /*
  * Default run state
@@ -398,7 +428,7 @@ parse_args(struct state *state, int argc, char **argv)
 	double d_value;		// Parsed parameter floating point
 	bool success = false;	// true if str2longint was successful
 	int test_cnt = 0;
-	long int i;
+	long int i, available_cpus;
 
 	/*
 	 * Record the program name
@@ -787,6 +817,7 @@ parse_args(struct state *state, int argc, char **argv)
 	if (test_cnt == 0 && state->batchmode == true) {
 		err(1, __func__, "no tests enabled");
 	}
+	available_cpus = getAvailableCPUCount();
 
 	/*
 	 * Set the number of uniformity bins to sqrt(iterations) if running in non-legacy mode and
@@ -808,20 +839,20 @@ parse_args(struct state *state, int argc, char **argv)
 
 	/*
 	 * If no custom number of threads was set, set the number of threads to be equal to the minimum
-	 * between the number of bitstreams and the number of cores of the computer where sts is running.
+	 * between the number of bitstreams and the logical CPUs available to this process.
 	 */
 	else if (state->numberOfThreadsFlag == false) {
-		state->numberOfThreads = MIN(sysconf(_SC_NPROCESSORS_ONLN), state->tp.numOfBitStreams);
+		state->numberOfThreads = MIN(available_cpus, state->tp.numOfBitStreams);
 	}
 
 	/*
-	 * If a custom number of threads was set and this number is greater than the number of processors
-	 * in the computer where sts is running, fire a warning to the user that this will not benefit sts.
+	 * If a custom number of threads was set and this number is greater than the number of logical
+	 * CPUs available to this process, fire a warning that this will usually not benefit sts.
 	 */
-	if (state->numberOfThreadsFlag == true && state->numberOfThreads > sysconf(_SC_NPROCESSORS_ONLN)) {
-		warn(__func__, "You selected a number of threads which is greater than the number of cores in this computer."
-				     " For better performance, you should choose a number of threads < %ld.",
-		     sysconf(_SC_NPROCESSORS_ONLN));
+	if (state->numberOfThreadsFlag == true && state->numberOfThreads > available_cpus) {
+		warn(__func__, "You selected more threads than logical CPUs available to this process."
+				     " For better performance, choose a number of threads <= %ld.",
+		     available_cpus);
 	}
 
 	/*

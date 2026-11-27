@@ -514,6 +514,7 @@ struct thread_state {
 	struct state *global_state;
 	long int iteration_being_done;
 	pthread_mutex_t *mutex;
+	int cpu_id;                            // Assigned logical CPU; -1 means unpinned
 };
 
 /* *INDENT-ON* */
