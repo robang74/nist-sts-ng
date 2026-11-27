@@ -42,6 +42,10 @@
 #include <unistd.h>
 #if defined(_USE_PIN_CPUS) && defined(__linux__)
 #include <sched.h>
+/* glibc provides the GNU thread-attribute affinity API; musl does not. */
+#if defined(_GNU_SOURCE) && defined(__GLIBC__)
+#define HAVE_PTHREAD_ATTR_SETAFFINITY_NP 1
+#endif
 #endif
 
 // for checking dir
@@ -1486,7 +1490,6 @@ handleFileBasedBitStreams(struct state *state)
 	int io_ret;		// I/O return status
 	long int i;
 	pthread_t thread[state->numberOfThreads];
-	pthread_attr_t attr;
 	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	struct thread_state *thread_args = malloc(state->numberOfThreads * sizeof(struct thread_state));
 	void *status;
@@ -1555,42 +1558,61 @@ handleFileBasedBitStreams(struct state *state)
 	}
 #endif
 
-	/*
-	 * Initialize and set thread detached attribute
-	 */
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-
 	dbg(DBG_LOW, "Start of iterate phase");
 
 	/*
 	 * Run numberOfThreads threads
 	 */
 	for (i = 0; i < state->numberOfThreads; i++) {
+		pthread_attr_t attr;
+
 		thread_args[i].global_state = state;
 		thread_args[i].thread_id = i;
 		thread_args[i].mutex = &mutex;
 		thread_args[i].cpu_id = -1;
 
-#if defined(_USE_PIN_CPUS) && defined(__linux__)
-		if (cpu_count > 0)
-			thread_args[i].cpu_id = cpu_list[i % cpu_count];
-		if (thread_args[i].cpu_id >= 0)
-			dbg(DBG_MED, "Assigning worker %ld to logical CPU %d", i, thread_args[i].cpu_id);
+		/* Each worker gets its own attributes; pthread_create copies them. */
+		io_ret = pthread_attr_init(&attr);
+		if (io_ret != 0)
+			err(224, __func__, "pthread_attr_init() failed: %s", strerror(io_ret));
+		io_ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+		if (io_ret != 0)
+			err(224, __func__, "pthread_attr_setdetachstate() failed: %s", strerror(io_ret));
+
+#if defined(_USE_PIN_CPUS) && defined(__linux__) && defined(HAVE_PTHREAD_ATTR_SETAFFINITY_NP)
+		if (thread_args[i].cpu_id >= 0) {
+			cpu_set_t worker_cpu;
+			int affinity_error;
+
+			CPU_ZERO(&worker_cpu);
+			CPU_SET(thread_args[i].cpu_id, &worker_cpu);
+			affinity_error = pthread_attr_setaffinity_np(&attr,
+			    sizeof(worker_cpu), &worker_cpu);
+			if (affinity_error != 0) {
+				warn(__func__, "worker %ld: pthread_attr_setaffinity_np() for CPU"
+			    " %d failed: %s; using startup fallback", i, thread_args[i].cpu_id,
+			    strerror(affinity_error));
+			} else {
+				dbg(DBG_MED, "Worker %ld will start pinned to logical CPU %d", i,
+			    thread_args[i].cpu_id);
+				/* The affinity is already set before the worker can run. */
+				thread_args[i].cpu_id = -1;
+			}
+		}
 #endif
 
 		io_ret = pthread_create(&thread[i], &attr, testBits, &thread_args[i]);
+		pthread_attr_destroy(&attr);
 		if (io_ret != 0) {
-			errp(224, __func__, "error on pthread_create()");
+			err(224, __func__, "pthread_create() failed: %s", strerror(io_ret));
 		}
 	}
 
 	dbg(DBG_HIGH, "All threads created and running. Will wait for them.");
 
 	/*
-	 * Free attribute and wait for the threads to finish
+	 * Wait for the threads to finish
 	 */
-	pthread_attr_destroy(&attr);
 	for (i = 0; i < state->numberOfThreads; i++) {
 		io_ret = pthread_join(thread[i], &status);
 		if (io_ret != 0) {
@@ -1632,20 +1654,33 @@ static void
 		err(225, __func__, "state arg is NULL");
 	}
 	/* Pin once: this worker keeps the same logical CPU while it claims and
-	 * processes subsequent iterations from the shared work queue. */
+	 * processes subsequent iterations from the shared work queue.  This is
+	 * the fallback for libcs without pthread_attr_setaffinity_np(), or when
+	 * setting the affinity in the attributes failed.
+	 */
 #if defined(_USE_PIN_CPUS) && defined(__linux__)
 	if (thread_state->cpu_id >= 0) {
-		cpu_set_t worker_cpu;
-		int affinity_error;
+		cpu_set_t allowed_cpus, worker_cpu;
+		int current_cpu, affinity_error;
+		int target_cpu = thread_state->cpu_id;
+
+		/* Prefer the CPU selected by the scheduler for this new worker. */
+		CPU_ZERO(&allowed_cpus);
+		if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
+			current_cpu = sched_getcpu();
+			if (current_cpu >= 0 && current_cpu < CPU_SETSIZE &&
+			    CPU_ISSET(current_cpu, &allowed_cpus))
+				target_cpu = current_cpu;
+		}
 
 		CPU_ZERO(&worker_cpu);
-		CPU_SET(thread_state->cpu_id, &worker_cpu);
+		CPU_SET(target_cpu, &worker_cpu);
 		affinity_error = pthread_setaffinity_np(pthread_self(), sizeof(worker_cpu), &worker_cpu);
 		if (affinity_error != 0)
 			warn(__func__, "thread %ld could not pin to CPU %d: %s; continuing unpinned",
-			     thread_state->thread_id, thread_state->cpu_id, strerror(affinity_error));
+		     thread_state->thread_id, target_cpu, strerror(affinity_error));
 		else
-			dbg(DBG_MED, "Thread %ld pinned to logical CPU %d", thread_state->thread_id, thread_state->cpu_id);
+			dbg(DBG_MED, "Thread %ld pinned to logical CPU %d", thread_state->thread_id, target_cpu);
 	}
 #endif
 
