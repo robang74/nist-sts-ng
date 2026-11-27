@@ -26,4 +26,16 @@ double sts_packed_pattern_psi2(const struct sts_walk_summary *walk,
 				       long int n, long int blocksize);
 double sts_packed_pattern_phi(const struct sts_walk_summary *walk,
 				      long int n, long int blocksize);
+
+/* Fill each non-periodic template's per-block non-overlapping counts.
+ * Returns 1 on success, 0 when the caller should use the legacy path. */
+int sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
+		long int n, long int block_len, long int blocks, long int m,
+		const BitSequence *templates, long int template_count,
+		struct nonover_stats *results);
+/* Count overlapping all-one windows and fill the capped occurrence histogram.
+ * Returns 1 on success, 0 when the caller should use the legacy path. */
+int sts_packed_overlapping_ones(const uint64_t *words, long int first,
+		long int n, long int block_len, long int m, long int max_bin,
+		long int *histogram, long int histogram_len);
 #endif /* STS_PACKED_H */

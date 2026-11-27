@@ -1,0 +1,415 @@
+From 88d6465a29473b199c3263cd380aa2855e4f5ac9 Mon Sep 17 00:00:00 2001
+From: "Roberto A. Foglietta" <roberto.foglietta@gmail.com>
+Date: Fri, 27 Nov 2026 15:26:41 +0100
+Subject: [PATCH] speedup/phase5: speeding up, patch p.5
+
+Signed-off-by: Roberto A. Foglietta <roberto.foglietta@gmail.com>
+---
+ src/tests/nonOverlappingTemplateMatchings.c |  87 +++++------
+ src/tests/overlappingTemplateMatchings.c    |  53 ++++---
+ src/utils/driver.c                          |   3 +-
+ src/utils/packed.c                          | 152 ++++++++++++++++++++
+ src/utils/packed.h                          |  12 ++
+ 5 files changed, 230 insertions(+), 77 deletions(-)
+
+diff --git a/src/tests/nonOverlappingTemplateMatchings.c b/src/tests/nonOverlappingTemplateMatchings.c
+index 110ecf6..15250f5 100644
+--- a/src/tests/nonOverlappingTemplateMatchings.c
++++ b/src/tests/nonOverlappingTemplateMatchings.c
+@@ -37,6 +37,7 @@
+ #include "../utils/utilities.h"
+ #include "../utils/cephes.h"
+ #include "../utils/debug.h"
++#include "../utils/packed.h"
+ 
+ 
+ /*
+@@ -425,6 +426,7 @@ NonOverlappingTemplateMatchings_iterate(struct thread_state *thread_state)
+ 	unsigned int W_obs;			// Counter of the number of occurrences of a template in a block
+ 	double chi2_term;			// Term used to compute chi squared
+ 	bool match;				// Indicator of a match of a template in a block
++	bool packed_templates = false;
+ 	long int i;
+ 	long int j;
+ 	long int jj;
+@@ -498,63 +500,52 @@ NonOverlappingTemplateMatchings_iterate(struct thread_state *thread_state)
+ 	nonover_stats = malloc((size_t) numOfTemplates[m] * sizeof(*nonover_stats));
+ 
+ 	/*
+-	 * Process all template values
++	 * Build all template counts in one packed pass when the stream is binary.
++	 * Otherwise retain the original independent per-template scans.
+ 	 */
++	if (state->epsilon_words != NULL && state->epsilon_words[thread_state->thread_id] != NULL &&
++	    state->walk_summary != NULL && state->walk_summary[thread_state->thread_id].invalid == 0) {
++		packed_templates = sts_packed_nonoverlap_counts(
++			state->epsilon_words[thread_state->thread_id], 0, n, stat.M,
++			BLOCKS_NON_OVERLAPPING, m,
++			addr_value(state->nonovTemplates, BitSequence, 0),
++			numOfTemplates[m], nonover_stats);
++	}
++
++	/* Process all template values */
+ 	for (jj = 0; jj < numOfTemplates[m]; jj++) {
+ 
+ 		struct nonover_stats nonover_stat;
+ 
+-		/*
+-		 * Get the next template from the pool of precomputed ones
+-		 */
+-		memcpy(state->nonper_seq[thread_state->thread_id], addr_value(state->nonovTemplates, BitSequence, m * jj),
+-		       m * sizeof(BitSequence));
+-
+-		/*
+-		 * Zeroize the occurrences counters for this template
+-		 */
+-		memset(nonover_stat.Wj, 0, sizeof(nonover_stat.Wj));
+-
+-		/*
+-	 	 * Step 2: count the number of times that this template occurs within each block
+-	 	 */
+-		for (i = 0; i < BLOCKS_NON_OVERLAPPING; i++) {
+-			W_obs = 0;
+-
+-			/*
+-			 * Count occurrences of the current template in block i
+-			 */
+-			for (j = 0; j < stat.M - m + 1; j++) {
+-				match = true;
+-
+-				/*
+-				 * Check if all the m bits of the template match the bits being
+-				 * considered in the block.
+-				 */
+-				for (k = 0; k < m; k++) {
+-					if (state->nonper_seq[thread_state->thread_id][k] !=
+-							state->epsilon[thread_state->thread_id][i * stat.M + j + k]) {
+-						match = false;
+-						break;
++		if (packed_templates) {
++			memcpy(nonover_stat.Wj, nonover_stats[jj].Wj, sizeof(nonover_stat.Wj));
++		} else {
++			/* Get the next template from the pool of precomputed ones. */
++			memcpy(state->nonper_seq[thread_state->thread_id],
++			       addr_value(state->nonovTemplates, BitSequence, m * jj),
++			       m * sizeof(BitSequence));
++			memset(nonover_stat.Wj, 0, sizeof(nonover_stat.Wj));
++
++			/* Count occurrences of this template independently in each block. */
++			for (i = 0; i < BLOCKS_NON_OVERLAPPING; i++) {
++				W_obs = 0;
++				for (j = 0; j < stat.M - m + 1; j++) {
++					match = true;
++					for (k = 0; k < m; k++) {
++						if (state->nonper_seq[thread_state->thread_id][k] !=
++						    state->epsilon[thread_state->thread_id][i * stat.M + j + k]) {
++							match = false;
++							break;
++						}
++					}
++					if (match == true) {
++						W_obs++;
++						j += m - 1;
+ 					}
+ 				}
+-
+-				/*
+-				 * If all the bits match, count one occurrence of this template and
+-				 * slide the window over m bits.
+-				 */
+-				if (match == true) {
+-					W_obs++;
+-					j += m - 1;
+-				}
++				nonover_stat.Wj[i] = W_obs;
+ 			}
+-
+-			/*
+-			 * Store the count of occurrences found in this block
+-			 */
+-			nonover_stat.Wj[i] = W_obs;
+ 		}
+-
+ 		/*
+ 		 * Step 4: compute the test statistic
+ 		 */
+diff --git a/src/tests/overlappingTemplateMatchings.c b/src/tests/overlappingTemplateMatchings.c
+index 9879882..30f0f52 100644
+--- a/src/tests/overlappingTemplateMatchings.c
++++ b/src/tests/overlappingTemplateMatchings.c
+@@ -37,6 +37,7 @@
+ #include "../utils/utilities.h"
+ #include "../utils/cephes.h"
+ #include "../utils/debug.h"
++#include "../utils/packed.h"
+ 
+ #define B_VALUE (1)		// The B template to be matched contains only 1 values
+ 
+@@ -262,36 +263,32 @@ OverlappingTemplateMatchings_iterate(struct thread_state *thread_state)
+ 	 * NOTE: Because the template we are checking is made only of ones, we don't need to
+ 	 *       allocate any array for it. We compare with the constant B_VALUE (which is 1) instead.
+ 	 */
+-	for (i = 0; i < stat.N; i++) {
+-
+-		/*
+-		 * Set the initial counter of the occurrences of the template in block i to zero
+-		 */
+-		W_obs = 0;
+-
+-		/*
+-		 * Increase the W_obs counter whenever there is an occurrence of the template in block i
+-		 */
+-		for (j = 0; j < BLOCK_LENGTH_OVERLAPPING - m + 1; j++) {
+-			match = true;
+-			for (k = 0; k < m; k++) {
+-				if (B_VALUE != state->epsilon[thread_state->thread_id][i * BLOCK_LENGTH_OVERLAPPING + j + k]) {
+-					match = false;
+-					break;
++	if (state->epsilon_words != NULL && state->epsilon_words[thread_state->thread_id] != NULL &&
++	    state->walk_summary != NULL && state->walk_summary[thread_state->thread_id].invalid == 0 &&
++	    sts_packed_overlapping_ones(state->epsilon_words[thread_state->thread_id], 0,
++				 n, BLOCK_LENGTH_OVERLAPPING, m, K_OVERLAPPING,
++				 stat.v, K_OVERLAPPING + 1)) {
++		/* Packed kernel has already filled stat.v. */
++	} else {
++		for (i = 0; i < stat.N; i++) {
++
++			/* Set the initial counter of the occurrences in block i. */
++			W_obs = 0;
++			for (j = 0; j < BLOCK_LENGTH_OVERLAPPING - m + 1; j++) {
++				match = true;
++				for (k = 0; k < m; k++) {
++					if (B_VALUE != state->epsilon[thread_state->thread_id][i * BLOCK_LENGTH_OVERLAPPING + j + k]) {
++						match = false;
++						break;
++					}
+ 				}
++				if (match == true)
++					W_obs++;
+ 			}
+-			if (match == true) {
+-				W_obs++;
+-			}
+-		}
+-
+-		/*
+-		 * Increase the counter v depending on the number of occurrences of the template in block i
+-		 */
+-		if (W_obs < K_OVERLAPPING) {
+-			stat.v[(int) W_obs]++;
+-		} else {
+-			stat.v[K_OVERLAPPING]++;
++			if (W_obs < K_OVERLAPPING)
++				stat.v[(int) W_obs]++;
++			else
++				stat.v[K_OVERLAPPING]++;
+ 		}
+ 	}
+ 
+diff --git a/src/utils/driver.c b/src/utils/driver.c
+index c816bc1..72cc0b5 100644
+--- a/src/utils/driver.c
++++ b/src/utils/driver.c
+@@ -381,7 +381,8 @@ init(struct state *state)
+ 	    state->testVector[TEST_RUNS] || state->testVector[TEST_CUSUM] ||
+ 	    state->testVector[TEST_RND_EXCURSION] || state->testVector[TEST_RND_EXCURSION_VAR] ||
+ 	    state->testVector[TEST_APEN] || state->testVector[TEST_SERIAL] ||
+-	    state->testVector[TEST_RANK]) {
++	    state->testVector[TEST_RANK] ||
++	    state->testVector[TEST_NON_OVERLAPPING] || state->testVector[TEST_OVERLAPPING]) {
+ 		size_t packed_words = (size_t) (state->tp.n / 64) + (state->tp.n % 64 != 0) + 2;
+ 		state->epsilon_words = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_words));
+ 		state->epsilon_ones = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_ones));
+diff --git a/src/utils/packed.c b/src/utils/packed.c
+index dcba9f3..f74f824 100644
+--- a/src/utils/packed.c
++++ b/src/utils/packed.c
+@@ -1,5 +1,6 @@
+ #include <string.h>
+ #include <stdint.h>
++#include <stdlib.h>
+ #include <math.h>
+ 
+ #include "defs.h"
+@@ -29,6 +30,157 @@ sts_packed_get_bit(const uint64_t *words, long int pos)
+ 	return (unsigned int) ((words[pos >> 6] >> (63 - (pos & 63))) & UINT64_C(1));
+ }
+ 
++/* Extract up to 32 MSB-first packed bits at an arbitrary bit offset. */
++static uint32_t
++sts_packed_get_bits(const uint64_t *words, long int first, unsigned int count)
++{
++    unsigned int shift = (unsigned int)(first & 63);
++    uint64_t value = words[first >> 6] << shift;
++
++    if (shift != 0)
++        value |= words[(first >> 6) + 1] >> (64 - shift);
++    return (uint32_t)(value >> (64 - count));
++}
++
++/* Return 64 consecutive MSB-first packed bits, aligned at bit 63. */
++static uint64_t
++sts_packed_get64(const uint64_t *words, long int first)
++{
++    unsigned int shift = (unsigned int)(first & 63);
++    uint64_t value = words[first >> 6];
++
++    if (shift != 0)
++        value = (value << shift) | (words[(first >> 6) + 1] >> (64 - shift));
++    return value;
++}
++
++/*
++ * Count all configured templates in one scan of each block.
++ * next_allowed[id] reproduces the legacy per-template j += m - 1 skip:
++ * after a match at j, the next legal start for that template is j + m.
++ * Different template IDs retain independent skip positions.
++ */
++int
++sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
++                             long int n, long int block_len, long int blocks, long int m,
++                             const BitSequence *templates, long int template_count,
++                             struct nonover_stats *results)
++{
++    uint16_t *lookup;
++    long int *next_allowed;
++    size_t lookup_len;
++    size_t i;
++    long int jj;
++    long int k;
++    long int block;
++    long int j;
++
++    if (words == NULL || templates == NULL || results == NULL || first < 0 ||
++        n <= 0 || block_len <= 0 || blocks <= 0 || blocks > BLOCKS_NON_OVERLAPPING ||
++        m <= 0 || m > 15 || block_len < m || blocks > n / block_len ||
++        template_count <= 0 || template_count >= (long int) UINT16_MAX)
++        return 0;
++
++    lookup_len = (size_t) 1U << (unsigned int)m;
++    lookup = malloc(lookup_len * sizeof(*lookup));
++    next_allowed = malloc((size_t)template_count * sizeof(*next_allowed));
++    if (lookup == NULL || next_allowed == NULL) {
++        free(lookup);
++        free(next_allowed);
++        return 0;
++    }
++    for (i = 0; i < lookup_len; ++i)
++        lookup[i] = UINT16_MAX;
++
++    /* Build a direct pattern-to-template map.  Duplicate or non-binary
++     * templates are unexpected; in that case preserve the legacy algorithm. */
++    for (jj = 0; jj < template_count; ++jj) {
++        uint32_t pattern = 0;
++        for (k = 0; k < m; ++k) {
++            unsigned int bit = (unsigned int)templates[jj * m + k];
++            if (bit > 1) {
++                free(lookup);
++                free(next_allowed);
++                return 0;
++            }
++            pattern = (pattern << 1) | bit;
++        }
++        if (lookup[pattern] != UINT16_MAX) {
++            free(lookup);
++            free(next_allowed);
++            return 0;
++        }
++        lookup[pattern] = (uint16_t)jj;
++    }
++
++    for (jj = 0; jj < template_count; ++jj)
++        for (block = 0; block < blocks; ++block)
++            results[jj].Wj[block] = 0;
++
++    for (block = 0; block < blocks; ++block) {
++        long int block_first = first + block * block_len;
++        long int starts = block_len - m + 1;
++        memset(next_allowed, 0, (size_t)template_count * sizeof(*next_allowed));
++
++        for (j = 0; j < starts; ++j) {
++            uint32_t pattern = sts_packed_get_bits(words, block_first + j, (unsigned int)m);
++            uint16_t id = lookup[pattern];
++            if (id != UINT16_MAX && j >= next_allowed[id]) {
++                results[id].Wj[block]++;
++                next_allowed[id] = j + m;
++            }
++        }
++    }
++
++    free(lookup);
++    free(next_allowed);
++    return 1;
++}
++
++/*
++ * Count every overlapping m-bit all-ones window.  Each bit in the result mask
++ * represents one possible window start, so 64 starts are evaluated together.
++ * Extra lanes in the final word are masked before the population count.
++ */
++int
++sts_packed_overlapping_ones(const uint64_t *words, long int first,
++                            long int n, long int block_len, long int m, long int max_bin,
++                            long int *histogram, long int histogram_len)
++{
++    long int blocks;
++    long int block;
++
++    if (words == NULL || histogram == NULL || first < 0 || n <= 0 ||
++        block_len <= 0 || m <= 0 || m >= 64 || block_len < m || max_bin < 0 ||
++        histogram_len < max_bin + 1)
++        return 0;
++
++    blocks = n / block_len;
++    memset(histogram, 0, (size_t)(max_bin + 1) * sizeof(*histogram));
++
++    for (block = 0; block < blocks; ++block) {
++        long int block_first = first + block * block_len;
++        long int starts = block_len - m + 1;
++        long int total = 0;
++        long int pos;
++
++        for (pos = 0; pos < starts; pos += 64) {
++            long int remaining = starts - pos;
++            unsigned int lanes = (remaining < 64) ? (unsigned int)remaining : 64U;
++            uint64_t matches = UINT64_MAX;
++            long int k;
++
++            for (k = 0; k < m; ++k)
++                matches &= sts_packed_get64(words, block_first + pos + k);
++            if (lanes < 64)
++                matches &= UINT64_MAX << (64 - lanes);
++            total += (long int)sts_popcount64(matches);
++        }
++        histogram[(total < max_bin) ? total : max_bin]++;
++    }
++    return 1;
++}
++
+ /* Build the histogram of all n circular windows of the requested length. */
+ void
+ sts_packed_pattern_histogram(const uint64_t *words, long int n, long int blocksize,
+diff --git a/src/utils/packed.h b/src/utils/packed.h
+index 904d3c5..000b8b7 100644
+--- a/src/utils/packed.h
++++ b/src/utils/packed.h
+@@ -26,4 +26,16 @@ double sts_packed_pattern_psi2(const struct sts_walk_summary *walk,
+ 				       long int n, long int blocksize);
+ double sts_packed_pattern_phi(const struct sts_walk_summary *walk,
+ 				      long int n, long int blocksize);
++
++/* Fill each non-periodic template's per-block non-overlapping counts.
++ * Returns 1 on success, 0 when the caller should use the legacy path. */
++int sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
++		long int n, long int block_len, long int blocks, long int m,
++		const BitSequence *templates, long int template_count,
++		struct nonover_stats *results);
++/* Count overlapping all-one windows and fill the capped occurrence histogram.
++ * Returns 1 on success, 0 when the caller should use the legacy path. */
++int sts_packed_overlapping_ones(const uint64_t *words, long int first,
++		long int n, long int block_len, long int m, long int max_bin,
++		long int *histogram, long int histogram_len);
+ #endif /* STS_PACKED_H */
+-- 
+2.34.1
+

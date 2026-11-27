@@ -37,6 +37,7 @@
 #include "../utils/utilities.h"
 #include "../utils/cephes.h"
 #include "../utils/debug.h"
+#include "../utils/packed.h"
 
 #define B_VALUE (1)		// The B template to be matched contains only 1 values
 
@@ -262,36 +263,32 @@ OverlappingTemplateMatchings_iterate(struct thread_state *thread_state)
 	 * NOTE: Because the template we are checking is made only of ones, we don't need to
 	 *       allocate any array for it. We compare with the constant B_VALUE (which is 1) instead.
 	 */
-	for (i = 0; i < stat.N; i++) {
+	if (state->epsilon_words != NULL && state->epsilon_words[thread_state->thread_id] != NULL &&
+	    state->walk_summary != NULL && state->walk_summary[thread_state->thread_id].invalid == 0 &&
+	    sts_packed_overlapping_ones(state->epsilon_words[thread_state->thread_id], 0,
+				 n, BLOCK_LENGTH_OVERLAPPING, m, K_OVERLAPPING,
+				 stat.v, K_OVERLAPPING + 1)) {
+		/* Packed kernel has already filled stat.v. */
+	} else {
+		for (i = 0; i < stat.N; i++) {
 
-		/*
-		 * Set the initial counter of the occurrences of the template in block i to zero
-		 */
-		W_obs = 0;
-
-		/*
-		 * Increase the W_obs counter whenever there is an occurrence of the template in block i
-		 */
-		for (j = 0; j < BLOCK_LENGTH_OVERLAPPING - m + 1; j++) {
-			match = true;
-			for (k = 0; k < m; k++) {
-				if (B_VALUE != state->epsilon[thread_state->thread_id][i * BLOCK_LENGTH_OVERLAPPING + j + k]) {
-					match = false;
-					break;
+			/* Set the initial counter of the occurrences in block i. */
+			W_obs = 0;
+			for (j = 0; j < BLOCK_LENGTH_OVERLAPPING - m + 1; j++) {
+				match = true;
+				for (k = 0; k < m; k++) {
+					if (B_VALUE != state->epsilon[thread_state->thread_id][i * BLOCK_LENGTH_OVERLAPPING + j + k]) {
+						match = false;
+						break;
+					}
 				}
+				if (match == true)
+					W_obs++;
 			}
-			if (match == true) {
-				W_obs++;
-			}
-		}
-
-		/*
-		 * Increase the counter v depending on the number of occurrences of the template in block i
-		 */
-		if (W_obs < K_OVERLAPPING) {
-			stat.v[(int) W_obs]++;
-		} else {
-			stat.v[K_OVERLAPPING]++;
+			if (W_obs < K_OVERLAPPING)
+				stat.v[(int) W_obs]++;
+			else
+				stat.v[K_OVERLAPPING]++;
 		}
 	}
 

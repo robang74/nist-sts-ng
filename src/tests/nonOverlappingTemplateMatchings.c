@@ -37,6 +37,7 @@
 #include "../utils/utilities.h"
 #include "../utils/cephes.h"
 #include "../utils/debug.h"
+#include "../utils/packed.h"
 
 
 /*
@@ -425,6 +426,7 @@ NonOverlappingTemplateMatchings_iterate(struct thread_state *thread_state)
 	unsigned int W_obs;			// Counter of the number of occurrences of a template in a block
 	double chi2_term;			// Term used to compute chi squared
 	bool match;				// Indicator of a match of a template in a block
+	bool packed_templates = false;
 	long int i;
 	long int j;
 	long int jj;
@@ -498,63 +500,52 @@ NonOverlappingTemplateMatchings_iterate(struct thread_state *thread_state)
 	nonover_stats = malloc((size_t) numOfTemplates[m] * sizeof(*nonover_stats));
 
 	/*
-	 * Process all template values
+	 * Build all template counts in one packed pass when the stream is binary.
+	 * Otherwise retain the original independent per-template scans.
 	 */
+	if (state->epsilon_words != NULL && state->epsilon_words[thread_state->thread_id] != NULL &&
+	    state->walk_summary != NULL && state->walk_summary[thread_state->thread_id].invalid == 0) {
+		packed_templates = sts_packed_nonoverlap_counts(
+			state->epsilon_words[thread_state->thread_id], 0, n, stat.M,
+			BLOCKS_NON_OVERLAPPING, m,
+			addr_value(state->nonovTemplates, BitSequence, 0),
+			numOfTemplates[m], nonover_stats);
+	}
+
+	/* Process all template values */
 	for (jj = 0; jj < numOfTemplates[m]; jj++) {
 
 		struct nonover_stats nonover_stat;
 
-		/*
-		 * Get the next template from the pool of precomputed ones
-		 */
-		memcpy(state->nonper_seq[thread_state->thread_id], addr_value(state->nonovTemplates, BitSequence, m * jj),
-		       m * sizeof(BitSequence));
+		if (packed_templates) {
+			memcpy(nonover_stat.Wj, nonover_stats[jj].Wj, sizeof(nonover_stat.Wj));
+		} else {
+			/* Get the next template from the pool of precomputed ones. */
+			memcpy(state->nonper_seq[thread_state->thread_id],
+			       addr_value(state->nonovTemplates, BitSequence, m * jj),
+			       m * sizeof(BitSequence));
+			memset(nonover_stat.Wj, 0, sizeof(nonover_stat.Wj));
 
-		/*
-		 * Zeroize the occurrences counters for this template
-		 */
-		memset(nonover_stat.Wj, 0, sizeof(nonover_stat.Wj));
-
-		/*
-	 	 * Step 2: count the number of times that this template occurs within each block
-	 	 */
-		for (i = 0; i < BLOCKS_NON_OVERLAPPING; i++) {
-			W_obs = 0;
-
-			/*
-			 * Count occurrences of the current template in block i
-			 */
-			for (j = 0; j < stat.M - m + 1; j++) {
-				match = true;
-
-				/*
-				 * Check if all the m bits of the template match the bits being
-				 * considered in the block.
-				 */
-				for (k = 0; k < m; k++) {
-					if (state->nonper_seq[thread_state->thread_id][k] !=
-							state->epsilon[thread_state->thread_id][i * stat.M + j + k]) {
-						match = false;
-						break;
+			/* Count occurrences of this template independently in each block. */
+			for (i = 0; i < BLOCKS_NON_OVERLAPPING; i++) {
+				W_obs = 0;
+				for (j = 0; j < stat.M - m + 1; j++) {
+					match = true;
+					for (k = 0; k < m; k++) {
+						if (state->nonper_seq[thread_state->thread_id][k] !=
+						    state->epsilon[thread_state->thread_id][i * stat.M + j + k]) {
+							match = false;
+							break;
+						}
+					}
+					if (match == true) {
+						W_obs++;
+						j += m - 1;
 					}
 				}
-
-				/*
-				 * If all the bits match, count one occurrence of this template and
-				 * slide the window over m bits.
-				 */
-				if (match == true) {
-					W_obs++;
-					j += m - 1;
-				}
+				nonover_stat.Wj[i] = W_obs;
 			}
-
-			/*
-			 * Store the count of occurrences found in this block
-			 */
-			nonover_stat.Wj[i] = W_obs;
 		}
-
 		/*
 		 * Step 4: compute the test statistic
 		 */

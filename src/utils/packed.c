@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <math.h>
 
 #include "defs.h"
@@ -27,6 +28,157 @@ static unsigned int
 sts_packed_get_bit(const uint64_t *words, long int pos)
 {
 	return (unsigned int) ((words[pos >> 6] >> (63 - (pos & 63))) & UINT64_C(1));
+}
+
+/* Extract up to 32 MSB-first packed bits at an arbitrary bit offset. */
+static uint32_t
+sts_packed_get_bits(const uint64_t *words, long int first, unsigned int count)
+{
+    unsigned int shift = (unsigned int)(first & 63);
+    uint64_t value = words[first >> 6] << shift;
+
+    if (shift != 0)
+        value |= words[(first >> 6) + 1] >> (64 - shift);
+    return (uint32_t)(value >> (64 - count));
+}
+
+/* Return 64 consecutive MSB-first packed bits, aligned at bit 63. */
+static uint64_t
+sts_packed_get64(const uint64_t *words, long int first)
+{
+    unsigned int shift = (unsigned int)(first & 63);
+    uint64_t value = words[first >> 6];
+
+    if (shift != 0)
+        value = (value << shift) | (words[(first >> 6) + 1] >> (64 - shift));
+    return value;
+}
+
+/*
+ * Count all configured templates in one scan of each block.
+ * next_allowed[id] reproduces the legacy per-template j += m - 1 skip:
+ * after a match at j, the next legal start for that template is j + m.
+ * Different template IDs retain independent skip positions.
+ */
+int
+sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
+                             long int n, long int block_len, long int blocks, long int m,
+                             const BitSequence *templates, long int template_count,
+                             struct nonover_stats *results)
+{
+    uint16_t *lookup;
+    long int *next_allowed;
+    size_t lookup_len;
+    size_t i;
+    long int jj;
+    long int k;
+    long int block;
+    long int j;
+
+    if (words == NULL || templates == NULL || results == NULL || first < 0 ||
+        n <= 0 || block_len <= 0 || blocks <= 0 || blocks > BLOCKS_NON_OVERLAPPING ||
+        m <= 0 || m > 15 || block_len < m || blocks > n / block_len ||
+        template_count <= 0 || template_count >= (long int) UINT16_MAX)
+        return 0;
+
+    lookup_len = (size_t) 1U << (unsigned int)m;
+    lookup = malloc(lookup_len * sizeof(*lookup));
+    next_allowed = malloc((size_t)template_count * sizeof(*next_allowed));
+    if (lookup == NULL || next_allowed == NULL) {
+        free(lookup);
+        free(next_allowed);
+        return 0;
+    }
+    for (i = 0; i < lookup_len; ++i)
+        lookup[i] = UINT16_MAX;
+
+    /* Build a direct pattern-to-template map.  Duplicate or non-binary
+     * templates are unexpected; in that case preserve the legacy algorithm. */
+    for (jj = 0; jj < template_count; ++jj) {
+        uint32_t pattern = 0;
+        for (k = 0; k < m; ++k) {
+            unsigned int bit = (unsigned int)templates[jj * m + k];
+            if (bit > 1) {
+                free(lookup);
+                free(next_allowed);
+                return 0;
+            }
+            pattern = (pattern << 1) | bit;
+        }
+        if (lookup[pattern] != UINT16_MAX) {
+            free(lookup);
+            free(next_allowed);
+            return 0;
+        }
+        lookup[pattern] = (uint16_t)jj;
+    }
+
+    for (jj = 0; jj < template_count; ++jj)
+        for (block = 0; block < blocks; ++block)
+            results[jj].Wj[block] = 0;
+
+    for (block = 0; block < blocks; ++block) {
+        long int block_first = first + block * block_len;
+        long int starts = block_len - m + 1;
+        memset(next_allowed, 0, (size_t)template_count * sizeof(*next_allowed));
+
+        for (j = 0; j < starts; ++j) {
+            uint32_t pattern = sts_packed_get_bits(words, block_first + j, (unsigned int)m);
+            uint16_t id = lookup[pattern];
+            if (id != UINT16_MAX && j >= next_allowed[id]) {
+                results[id].Wj[block]++;
+                next_allowed[id] = j + m;
+            }
+        }
+    }
+
+    free(lookup);
+    free(next_allowed);
+    return 1;
+}
+
+/*
+ * Count every overlapping m-bit all-ones window.  Each bit in the result mask
+ * represents one possible window start, so 64 starts are evaluated together.
+ * Extra lanes in the final word are masked before the population count.
+ */
+int
+sts_packed_overlapping_ones(const uint64_t *words, long int first,
+                            long int n, long int block_len, long int m, long int max_bin,
+                            long int *histogram, long int histogram_len)
+{
+    long int blocks;
+    long int block;
+
+    if (words == NULL || histogram == NULL || first < 0 || n <= 0 ||
+        block_len <= 0 || m <= 0 || m >= 64 || block_len < m || max_bin < 0 ||
+        histogram_len < max_bin + 1)
+        return 0;
+
+    blocks = n / block_len;
+    memset(histogram, 0, (size_t)(max_bin + 1) * sizeof(*histogram));
+
+    for (block = 0; block < blocks; ++block) {
+        long int block_first = first + block * block_len;
+        long int starts = block_len - m + 1;
+        long int total = 0;
+        long int pos;
+
+        for (pos = 0; pos < starts; pos += 64) {
+            long int remaining = starts - pos;
+            unsigned int lanes = (remaining < 64) ? (unsigned int)remaining : 64U;
+            uint64_t matches = UINT64_MAX;
+            long int k;
+
+            for (k = 0; k < m; ++k)
+                matches &= sts_packed_get64(words, block_first + pos + k);
+            if (lanes < 64)
+                matches &= UINT64_MAX << (64 - lanes);
+            total += (long int)sts_popcount64(matches);
+        }
+        histogram[(total < max_bin) ? total : max_bin]++;
+    }
+    return 1;
 }
 
 /* Build the histogram of all n circular windows of the requested length. */
