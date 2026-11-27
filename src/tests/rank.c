@@ -39,6 +39,7 @@
 #include "../utils/matrix.h"
 #include "../utils/utilities.h"
 #include "../utils/debug.h"
+#include "../utils/packed.h"
 
 
 /*
@@ -305,12 +306,17 @@ Rank_iterate(struct thread_state *thread_state)
 		/*
 	 	 * Step 1b: copy bits of each block into a NUMBER_OF_ROWS_RANK * NUMBER_OF_COLS_RANK matrix
 	 	 */
-		def_matrix(thread_state, NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix, k);
-
-		/*
-	 	 * Step 2: determine the binary rank of each matrix
-	 	 */
-		R = computeRank(NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix);
+		/* The packed path is equivalent for binary input.  Preserve the
+		 * original validation/error path for non-binary input bytes. */
+		if (state->walk_summary[thread_state->thread_id].invalid == 0) {
+			long int first = k * (long int) NUMBER_OF_ROWS_RANK * NUMBER_OF_COLS_RANK;
+			R = sts_packed_rank32(state->epsilon_words[thread_state->thread_id], first);
+			if (R < 0)
+				err(171, __func__, "packed rank kernel rejected matrix offset %ld", first);
+		} else {
+			def_matrix(thread_state, NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix, k);
+			R = computeRank(NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix);
+		}
 
 		/*
 		 * Step 3a: count the number of matrices with rank = (full rank) and rank = (full rank - 1)

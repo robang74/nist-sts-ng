@@ -1,0 +1,138 @@
+From d376aeb3e4a870eec7860a723bb4d23cbed3c5f3 Mon Sep 17 00:00:00 2001
+From: "Roberto A. Foglietta" <roberto.foglietta@gmail.com>
+Date: Fri, 27 Nov 2026 14:18:18 +0100
+Subject: [PATCH] speedup/phase4: speeding up, patch p.4
+
+Signed-off-by: Roberto A. Foglietta <roberto.foglietta@gmail.com>
+---
+ src/tests/rank.c   | 18 ++++++++++++------
+ src/utils/driver.c |  3 ++-
+ src/utils/packed.c | 47 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/utils/packed.h |  3 +++
+ 4 files changed, 64 insertions(+), 7 deletions(-)
+
+diff --git a/src/tests/rank.c b/src/tests/rank.c
+index 1cec4b5..8f6d71a 100644
+--- a/src/tests/rank.c
++++ b/src/tests/rank.c
+@@ -39,6 +39,7 @@
+ #include "../utils/matrix.h"
+ #include "../utils/utilities.h"
+ #include "../utils/debug.h"
++#include "../utils/packed.h"
+ 
+ 
+ /*
+@@ -305,12 +306,17 @@ Rank_iterate(struct thread_state *thread_state)
+ 		/*
+ 	 	 * Step 1b: copy bits of each block into a NUMBER_OF_ROWS_RANK * NUMBER_OF_COLS_RANK matrix
+ 	 	 */
+-		def_matrix(thread_state, NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix, k);
+-
+-		/*
+-	 	 * Step 2: determine the binary rank of each matrix
+-	 	 */
+-		R = computeRank(NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix);
++		/* The packed path is equivalent for binary input.  Preserve the
++		 * original validation/error path for non-binary input bytes. */
++		if (state->walk_summary[thread_state->thread_id].invalid == 0) {
++			long int first = k * (long int) NUMBER_OF_ROWS_RANK * NUMBER_OF_COLS_RANK;
++			R = sts_packed_rank32(state->epsilon_words[thread_state->thread_id], first);
++			if (R < 0)
++				err(171, __func__, "packed rank kernel rejected matrix offset %ld", first);
++		} else {
++			def_matrix(thread_state, NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix, k);
++			R = computeRank(NUMBER_OF_ROWS_RANK, NUMBER_OF_COLS_RANK, matrix);
++		}
+ 
+ 		/*
+ 		 * Step 3a: count the number of matrices with rank = (full rank) and rank = (full rank - 1)
+diff --git a/src/utils/driver.c b/src/utils/driver.c
+index d5f14af..c816bc1 100644
+--- a/src/utils/driver.c
++++ b/src/utils/driver.c
+@@ -380,7 +380,8 @@ init(struct state *state)
+ 	if (state->testVector[TEST_FREQUENCY] || state->testVector[TEST_BLOCK_FREQUENCY] ||
+ 	    state->testVector[TEST_RUNS] || state->testVector[TEST_CUSUM] ||
+ 	    state->testVector[TEST_RND_EXCURSION] || state->testVector[TEST_RND_EXCURSION_VAR] ||
+-	    state->testVector[TEST_APEN] || state->testVector[TEST_SERIAL]) {
++	    state->testVector[TEST_APEN] || state->testVector[TEST_SERIAL] ||
++	    state->testVector[TEST_RANK]) {
+ 		size_t packed_words = (size_t) (state->tp.n / 64) + (state->tp.n % 64 != 0) + 2;
+ 		state->epsilon_words = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_words));
+ 		state->epsilon_ones = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_ones));
+diff --git a/src/utils/packed.c b/src/utils/packed.c
+index 2d1dc2b..dcba9f3 100644
+--- a/src/utils/packed.c
++++ b/src/utils/packed.c
+@@ -262,6 +262,53 @@ sts_prepare_packed_stream(struct state *state, long int thread_id)
+ 	sts_prepare_pattern_histogram(state, thread_id, walk, words);
+ }
+ 
++/* Extract 32 consecutive MSB-first packed bits as a conventional 32-bit row. */
++static uint32_t
++sts_packed_get32(const uint64_t *words, long int first)
++{
++    unsigned int shift = (unsigned int)(first & 63);
++    uint64_t value = words[first >> 6] << shift;
++    if (shift != 0)
++        value |= words[(first >> 6) + 1] >> (64 - shift);
++    return (uint32_t)(value >> 32);
++}
++
++/* Gaussian elimination over GF(2), with one matrix row per uint32_t. */
++int
++sts_packed_rank32(const uint64_t *words, long int first)
++{
++    uint32_t row[32];
++    int rank = 0;
++    int col;
++    int i;
++
++    if (words == NULL || first < 0)
++        return -1;
++    for (i = 0; i < 32; ++i)
++        row[i] = sts_packed_get32(words, first + (long int)i * 32);
++
++    for (col = 31; col >= 0; --col) {
++        uint32_t mask = UINT32_C(1) << col;
++        int pivot = rank;
++        while (pivot < 32 && (row[pivot] & mask) == 0)
++            ++pivot;
++        if (pivot == 32)
++            continue;
++        if (pivot != rank) {
++            uint32_t tmp = row[rank];
++            row[rank] = row[pivot];
++            row[pivot] = tmp;
++        }
++        for (i = rank + 1; i < 32; ++i)
++            if (row[i] & mask)
++                row[i] ^= row[rank];
++        ++rank;
++        if (rank == 32)
++            break;
++    }
++    return rank;
++}
++
+ long int
+ sts_packed_range_ones(const uint64_t *words, long int first, long int count)
+ {
+diff --git a/src/utils/packed.h b/src/utils/packed.h
+index 8ee7ad7..904d3c5 100644
+--- a/src/utils/packed.h
++++ b/src/utils/packed.h
+@@ -12,6 +12,9 @@ long int sts_packed_range_ones(const uint64_t *words, long int first, long int c
+ 
+ /* Number of runs in the first n bits (1 for every non-empty stream). */
+ long int sts_packed_runs(const uint64_t *words, long int n);
++/* Rank of one 32x32 matrix beginning at bit offset first (MSB-first).
++ * Returns -1 for invalid arguments. */
++int sts_packed_rank32(const uint64_t *words, long int first);
+ 
+ /* Build one circular histogram of all blocksize-bit windows. */
+ void sts_packed_pattern_histogram(const uint64_t *words, long int n,
+-- 
+2.34.1
+

@@ -262,6 +262,53 @@ sts_prepare_packed_stream(struct state *state, long int thread_id)
 	sts_prepare_pattern_histogram(state, thread_id, walk, words);
 }
 
+/* Extract 32 consecutive MSB-first packed bits as a conventional 32-bit row. */
+static uint32_t
+sts_packed_get32(const uint64_t *words, long int first)
+{
+    unsigned int shift = (unsigned int)(first & 63);
+    uint64_t value = words[first >> 6] << shift;
+    if (shift != 0)
+        value |= words[(first >> 6) + 1] >> (64 - shift);
+    return (uint32_t)(value >> 32);
+}
+
+/* Gaussian elimination over GF(2), with one matrix row per uint32_t. */
+int
+sts_packed_rank32(const uint64_t *words, long int first)
+{
+    uint32_t row[32];
+    int rank = 0;
+    int col;
+    int i;
+
+    if (words == NULL || first < 0)
+        return -1;
+    for (i = 0; i < 32; ++i)
+        row[i] = sts_packed_get32(words, first + (long int)i * 32);
+
+    for (col = 31; col >= 0; --col) {
+        uint32_t mask = UINT32_C(1) << col;
+        int pivot = rank;
+        while (pivot < 32 && (row[pivot] & mask) == 0)
+            ++pivot;
+        if (pivot == 32)
+            continue;
+        if (pivot != rank) {
+            uint32_t tmp = row[rank];
+            row[rank] = row[pivot];
+            row[pivot] = tmp;
+        }
+        for (i = rank + 1; i < 32; ++i)
+            if (row[i] & mask)
+                row[i] ^= row[rank];
+        ++rank;
+        if (rank == 32)
+            break;
+    }
+    return rank;
+}
+
 long int
 sts_packed_range_ones(const uint64_t *words, long int first, long int count)
 {

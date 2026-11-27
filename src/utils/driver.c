@@ -380,7 +380,8 @@ init(struct state *state)
 	if (state->testVector[TEST_FREQUENCY] || state->testVector[TEST_BLOCK_FREQUENCY] ||
 	    state->testVector[TEST_RUNS] || state->testVector[TEST_CUSUM] ||
 	    state->testVector[TEST_RND_EXCURSION] || state->testVector[TEST_RND_EXCURSION_VAR] ||
-	    state->testVector[TEST_APEN] || state->testVector[TEST_SERIAL]) {
+	    state->testVector[TEST_APEN] || state->testVector[TEST_SERIAL] ||
+	    state->testVector[TEST_RANK]) {
 		size_t packed_words = (size_t) (state->tp.n / 64) + (state->tp.n % 64 != 0) + 2;
 		state->epsilon_words = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_words));
 		state->epsilon_ones = calloc((size_t) state->numberOfThreads, sizeof(*state->epsilon_ones));

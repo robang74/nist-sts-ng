@@ -12,6 +12,9 @@ long int sts_packed_range_ones(const uint64_t *words, long int first, long int c
 
 /* Number of runs in the first n bits (1 for every non-empty stream). */
 long int sts_packed_runs(const uint64_t *words, long int n);
+/* Rank of one 32x32 matrix beginning at bit offset first (MSB-first).
+ * Returns -1 for invalid arguments. */
+int sts_packed_rank32(const uint64_t *words, long int first);
 
 /* Build one circular histogram of all blocksize-bit windows. */
 void sts_packed_pattern_histogram(const uint64_t *words, long int n,
