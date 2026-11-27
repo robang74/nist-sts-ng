@@ -6,7 +6,9 @@
 
 > [!NOTE]
 >
-> The `uchaosys` integrates the 20x [speedup](speedup/) based on the same principle already applied to the [nist-sts](https://github.com/robang74/nist-sts/blob/uchaosys/speed-up-assess.md) project by [AndreiBalan-dev](https://github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess). This optimization packs bitstreams into 64-bit words and reuses shared per-stream summaries, histograms, and bitwise/word-level operations with `-O3` compilation while keeping the original floating-point evaluation order to produce byte-identical outputs on valid inputs.
+> The `uchaosys` integrates the 20x [speedup](speedup/) based on the same principle already applied to the [nist-sts](https://github.com/robang74/nist-sts/blob/uchaosys/speed-up-assess.md) project by [AndreiBalan-dev](https://github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess). This optimization packs bitstreams into 64-bit words and reuses shared per-stream summaries, histograms, and bitwise/word-level operations with `-O3` compilation while keeping the original floating-point evaluation order to produce byte-identical outputs on valid inputs. Finally, the static linking has been chosen as default to increase the suite portability.
+
+---
 
 ### TL;DR
 
