@@ -1,0 +1,211 @@
+diff --git a/src/Makefile b/src/Makefile
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -55,6 +55,13 @@ LOC_INC= -I /usr/include -I /usr/global/include -I /usr/local/include
+ #CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -Werror -pedantic ${LOC_INC} ${OPT} ${DEBUG}
+ #CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -Werror -pedantic ${LOC_INC} ${OPT} ${DEBUG}
+ CFLAGS= -std=c99 -D_ISOC99_SOURCE -Wall -pedantic ${LOC_INC} ${OPT} ${DEBUG}
++
++# Keep each persistent worker on one allowed logical CPU by default.
++# Use "make PIN_CPUS=0" to disable CPU affinity for comparison.
++PIN_CPUS ?= 1
++ifeq ($(PIN_CPUS),1)
++CFLAGS += -D_USE_PIN_CPUS
++endif
+ 
+ # locations
+ #
+diff --git a/src/utils/defs.h b/src/utils/defs.h
+--- a/src/utils/defs.h
++++ b/src/utils/defs.h
+@@ -462,7 +462,8 @@ struct thread_state {
+ 	long int thread_id;
+ 	struct state *global_state;
+ 	long int iteration_being_done;
+ 	pthread_mutex_t *mutex;
++	int cpu_id;                            // Assigned logical CPU; -1 means unpinned
+ };
+ 
+ /* *INDENT-ON* */
+diff --git a/src/utils/parse_args.c b/src/utils/parse_args.c
+--- a/src/utils/parse_args.c
++++ b/src/utils/parse_args.c
+@@ -33,6 +33,9 @@
+ #include <sys/stat.h>
+ #include <errno.h>
+ #include <unistd.h>
++#if defined(_USE_PIN_CPUS) && defined(__linux__)
++#include <sched.h>
++#endif
+ #include <dirent.h>
+ #include <math.h>
+ #include "../utils/externs.h"
+@@ -42,5 +45,33 @@
+  */
+ static void change_params(struct state *state, long int parameter, long int value, double d_value);
++
++/*
++ * Return the number of logical CPUs available to this process.
++ * On Linux, sched_getaffinity() also observes taskset/cpuset restrictions.
++ */
++static long int
++getAvailableCPUCount(void)
++{
++	long int count;
++#if defined(_USE_PIN_CPUS) && defined(__linux__)
++	cpu_set_t allowed_cpus;
++	int cpu;
++
++	count = 0;
++	CPU_ZERO(&allowed_cpus);
++	if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
++		for (cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
++			if (CPU_ISSET(cpu, &allowed_cpus))
++				++count;
++		}
++		if (count > 0)
++			return count;
++	}
++#endif
++	count = sysconf(_SC_NPROCESSORS_ONLN);
++	return (count > 0) ? count : 1;
++}
++
+ /*
+  * Default run state
+  *
+@@ -377,6 +405,7 @@ parse_args(struct state *state, int argc, char **argv)
+ 	bool success = false;	// true if str2longint was successful
+ 	int test_cnt = 0;
+ 	long int i;
++	long int available_cpus;
+ 	/*
+ 	 * Record the program name
+ 	 */
+@@ -742,5 +775,6 @@ parse_args(struct state *state, int argc, char **argv)
+ 	if (test_cnt == 0 && state->batchmode == true) {
+ 		err(1, __func__, "no tests enabled");
+ 	}
++	available_cpus = getAvailableCPUCount();
+ 	/*
+ 	 * Set the number of uniformity bins to sqrt(iterations) if running in non-legacy mode and
+@@ -758,21 +788,21 @@ parse_args(struct state *state, int argc, char **argv)
+ 	else if (state->uniformityBinsFlag == true && state->legacy_output == true) {
+ 		warn(__func__, "The number of uniformity bins was set back to %d due to '-O' legacy mode flag",
+ 		    DEFAULT_UNIFORMITY_BINS);
+ 		state->tp.uniformity_bins = DEFAULT_UNIFORMITY_BINS;
+ 	}
+ 	/*
+ 	 * If no custom number of threads was set, set the number of threads to be equal to the minimum
+-	 * between the number of bitstreams and the number of cores of the computer where sts is running.
++	 * between the number of bitstreams and the logical CPUs available to this process.
+ 	 */
+ 	else if (state->numberOfThreadsFlag == false) {
+-		state->numberOfThreads = MIN(sysconf(_SC_NPROCESSORS_ONLN), state->tp.numOfBitStreams);
++		state->numberOfThreads = MIN(available_cpus, state->tp.numOfBitStreams);
+ 	}
+ 	/*
+-	 * If a custom number of threads was set and this number is greater than the number of processors
+-	 * in the computer where sts is running, fire a warning to the user that this will not benefit sts.
++	 * If a custom number of threads was set and this number is greater than the number of logical
++	 * CPUs available to this process, fire a warning that this will usually not benefit sts.
+ 	 */
+-	if (state->numberOfThreadsFlag == true && state->numberOfThreads > sysconf(_SC_NPROCESSORS_ONLN)) {
+-		warn(__func__, "You selected a number of threads which is greater than the number of cores in this computer."
+-				     " For better performance, you should choose a number of threads < %ld.",
+-		     sysconf(_SC_NPROCESSORS_ONLN));
++	if (state->numberOfThreadsFlag == true && state->numberOfThreads > available_cpus) {
++		warn(__func__, "You selected more threads than logical CPUs available to this process."
++				     " For better performance, choose a number of threads <= %ld.",
++		     available_cpus);
+ 	}
+diff --git a/src/utils/utilities.c b/src/utils/utilities.c
+--- a/src/utils/utilities.c
++++ b/src/utils/utilities.c
+@@ -35,6 +35,9 @@
+ #include <limits.h>
+ #include <pthread.h>
+ #include <unistd.h>
++#if defined(_USE_PIN_CPUS) && defined(__linux__)
++#include <sched.h>
++#endif
+ 
+ // for checking dir
+ #include <fcntl.h>
+@@ -1391,7 +1394,13 @@ handleFileBasedBitStreams(struct state *state)
+ 	pthread_attr_t attr;
+ 	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+ 	struct thread_state *thread_args = malloc(state->numberOfThreads * sizeof(struct thread_state));
+ 	void *status;
++#if defined(_USE_PIN_CPUS) && defined(__linux__)
++	cpu_set_t allowed_cpus;
++	int cpu_list[CPU_SETSIZE];
++	int cpu_count = 0;
++	int cpu;
++#endif
+ 
+ 	/*
+ 	 * Check preconditions (firewall)
+@@ -1432,5 +1440,23 @@ handleFileBasedBitStreams(struct state *state)
+ 		state->base_seek = ((state->jobnum * state->tp.n * state->tp.numOfBitStreams) + BITS_N_BYTE - 1) / BITS_N_BYTE;
+ 	}
++	/*
++	 * Snapshot the CPUs available to this process. Each persistent worker gets
++	 * one CPU from this list and keeps that affinity for its entire lifetime.
++	 */
++#if defined(_USE_PIN_CPUS) && defined(__linux__)
++	CPU_ZERO(&allowed_cpus);
++	if (sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus) == 0) {
++		for (cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
++			if (CPU_ISSET(cpu, &allowed_cpus))
++				cpu_list[cpu_count++] = cpu;
++		}
++	}
++	if (cpu_count == 0) {
++		warn(__func__, "cannot obtain the allowed CPU set; workers will run without pinning");
++	} else {
++		dbg(DBG_MED, "CPU pinning enabled for %d allowed logical CPUs", cpu_count);
++	}
++#endif
+ 	/*
+ 	 * Initialize and set thread detached attribute
+ 	 */
+@@ -1444,7 +1471,14 @@ handleFileBasedBitStreams(struct state *state)
+ 	for (i = 0; i < state->numberOfThreads; i++) {
+ 		thread_args[i].global_state = state;
+ 		thread_args[i].thread_id = i;
+ 		thread_args[i].mutex = &mutex;
++		thread_args[i].cpu_id = -1;
++#if defined(_USE_PIN_CPUS) && defined(__linux__)
++		if (cpu_count > 0)
++			thread_args[i].cpu_id = cpu_list[i % cpu_count];
++		if (thread_args[i].cpu_id >= 0)
++			dbg(DBG_MED, "Assigning worker %ld to logical CPU %d", i, thread_args[i].cpu_id);
++#endif
+ 		io_ret = pthread_create(&thread[i], &attr, testBits, &thread_args[i]);
+ 		if (io_ret != 0) {
+ 			errp(224, __func__, "error on pthread_create()");
+@@ -1496,5 +1532,22 @@ *testBits(void *thread_args)
+ 	if (state == NULL) {
+ 		err(225, __func__, "state arg is NULL");
+ 	}
++	/* Pin once: this worker keeps the same logical CPU while it claims and
++	 * processes subsequent iterations from the shared work queue. */
++#if defined(_USE_PIN_CPUS) && defined(__linux__)
++	if (thread_state->cpu_id >= 0) {
++		cpu_set_t worker_cpu;
++		int affinity_error;
++
++		CPU_ZERO(&worker_cpu);
++		CPU_SET(thread_state->cpu_id, &worker_cpu);
++		affinity_error = pthread_setaffinity_np(pthread_self(), sizeof(worker_cpu), &worker_cpu);
++		if (affinity_error != 0)
++			warn(__func__, "thread %ld could not pin to CPU %d: %s; continuing unpinned",
++			     thread_state->thread_id, thread_state->cpu_id, strerror(affinity_error));
++		else
++			dbg(DBG_MED, "Thread %ld pinned to logical CPU %d", thread_state->thread_id, thread_state->cpu_id);
++	}
++#endif
+ 
+ 	dbg(DBG_HIGH, "Thread %ld started.", thread_state->thread_id);
+*** End Patch
