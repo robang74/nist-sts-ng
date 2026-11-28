@@ -1,6 +1,6 @@
-## Speeding up results
+## Manyfolds Speeding Up
 
-The patched phase6 computes **20x** (on average) faster on all tests impacted.
+The patched `phase6` + `workload1` computes **24x** (raw estimation) faster on average for the full testsuite (aka all the tests active in the standard mix for NIST check)
 
 - `Intel(R) Core(TM) i5-8365U CPU @ 1.60GHz` (energy saving mode)
 
@@ -8,17 +8,20 @@ The main idea behind this work is what have been done on github by
 
 - [AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess](https://github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess)
 
-The optimization principle has been transferred with the support of ChatGPT
-which artifacts have been saved in `speedup` folder for each of the six phases.
+The optimization principle has been transferred with the support of ChatGPT which artifacts have been saved in `speedup` folder for each of the six phases.
 
 ### Performance increase
 
-A single confrontation on a single system is merely indicative and cannot be taken as a conclusion of the speedup achievement. On the other hand, a **20x** speedup cannot be overlooked, either.
+A single confrontation on a single system is merely indicative and cannot be taken as a conclusion of the speedup achievement. On the other hand, a **24x** speedup cannot be overlooked, either.
 
 * `8x`: `530.8 / 29.83` = **`17.8x`** (`real`), `4057.6 / 171.70` = **`23.6x`** (`user`)
 * `1x`: `183.3 / 9.704` = **`18.9x`** (`real`), ` 183.1 /   9.72` = **`18.9x`** (`user`) 
 
-Potentially, it can be speedup by another `7.64 / 5.76 = 1.33x` by achieving a more effective CPU allocation on computational workload, while the I/O workload appears negligible in all the cases.
+Moreover, it has been speedup by another `7.64 / 5.76 = 1.33x` by achieving a more effective CPU allocation on computational workload, while the I/O workload appears negligible in all the cases.
+
+> [!NOTE]
+> 
+> About the number of threads, note that they are N workers plus the parent that is in charge of preparing the jobs queue.
 
 ---
 
@@ -34,8 +37,8 @@ Potentially, it can be speedup by another `7.64 / 5.76 = 1.33x` by achieving a m
 
 ```sh
 roberto@x280[8]:~/robang74/nist-sts-ng$
-time ./sts -v 1 -I 10 -s -i 1000 -S 1048576
-    -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
+time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576 -F r
+    -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
 ```
 ```console
 Testing data from file:
@@ -67,8 +70,8 @@ sys   0m  0.279s
 
 ```sh
 roberto@x280[8]:~/robang74/nist-sts-ng$
-time ./sts -v 1 -I 10 -s -i 128 -T 1 -S 1048576
-    -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
+time ./sts -v 1 -I 10 -s -i 1000 -T 1 -S 1048576 -F r
+    -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
 ```
 ```console
 Testing data from file:
@@ -107,8 +110,8 @@ sys   0m 0.036s
 
 ```sh
 roberto@x280[2]:~/robang74/nist-sts-ng$
-time ./sts -v 1 -I 10 -s -i 1000 -S 1048576
-    -F r -w test-02 ~/robang74/uchaosys/kdev/data32.bin.01
+time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576 -F r
+    -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
 ```
 ```console
 Testing data from file:
@@ -141,8 +144,8 @@ sys    0m  3.246s
 
 ```sh
 roberto@x280[8]:~/robang74/nist-sts-ng$
-time ./sts -v 1 -I 10 -s -i 128 -T 1 -S 1048576
-    -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
+time ./sts -v 1 -I 10 -s -i 1000 -T 1 -S 1048576 -F r
+    -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
 ```
 ```console
 Testing data from file:
@@ -187,8 +190,8 @@ This kind of I/O optimization has a little effect when data comes from `stdin`, 
 
 ```sh
 roberto@x280[1]:~/robang74/nist-sts-ng$
-time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576
-    -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
+time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576 -F r
+    -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
 ```
 ```console
 Testing data from file:
@@ -215,8 +218,8 @@ sys   0m  0.356s
 
 ```sh
 roberto@x280[1]:~/robang74/nist-sts-ng$
-time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576
-    -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
+time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576 -F r
+    -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
 ```
 ```console
 Testing data from file:
