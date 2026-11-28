@@ -166,3 +166,75 @@ real  3m 33.267s
 user  3m 33.100s
 sys   0m  0.093s
 ```
+
+---
+
+### WORKLOAD
+
+On mobile CPUs the thermal throttling has a relevant impact on sustained computational workload performance, clearly.
+
+* ratio warm / cold on `real` is `27.591 / 22.940` = **1.20** slower 
+* ratio warm / cold on `user` is `210.40 / 173.12` = **1.22** slower 
+
+While a better workload balancing in terms of completely independent access to the input by `pread()` restored the computational effectiveness to a value nearly the cores engaged.
+
+* ratio `user / real` is `173.12 / 22.940` = **7.55** (cold)
+* ratio `user / real` is `210.40 / 27.591` = **7.63** (warm)
+
+This kind of I/O optimization has a little effect when data comes from `stdin`, but the standard input I/O can be heavily cached by the kernel and by the application, both.
+
+#### Cold-CPU start
+
+```sh
+roberto@x280[1]:~/robang74/nist-sts-ng$
+time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576
+    -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
+```
+```console
+Testing data from file:
+    /home/roberto/robang74/uchaosys/kdev/data32.bin.01
+...
+Start of iterate phase
+Completed iteration   1 of 1000 at 2026-11-28 11:07:36
+Completed iteration  11 of 1000 at 2026-11-28 11:07:36
+Completed iteration  21 of 1000 at 2026-11-28 11:07:36
+Completed iteration  31 of 1000 at 2026-11-28 11:07:36
+Completed iteration  41 of 1000 at 2026-11-28 11:07:36
+...
+Completed iteration 991 of 1000 at 2026-11-28 11:07:59
+...
+Execution completed!
+Check the result.txt file for the results
+
+real  0m 22.940s
+user  2m 53.115s
+sys   0m  0.356s
+```
+
+#### Warn-CPU start
+
+```sh
+roberto@x280[1]:~/robang74/nist-sts-ng$
+time ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576
+    -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
+```
+```console
+Testing data from file:
+    /home/roberto/robang74/uchaosys/kdev/data32.bin.01
+...
+Start of iterate phase
+Completed iteration   1 of 1000 at 2026-11-28 11:08:03
+Completed iteration  11 of 1000 at 2026-11-28 11:08:03
+Completed iteration  21 of 1000 at 2026-11-28 11:08:03
+Completed iteration  31 of 1000 at 2026-11-28 11:08:03
+Completed iteration  41 of 1000 at 2026-11-28 11:08:03
+...
+Completed iteration 991 of 1000 at 2026-11-28 11:08:31
+...
+Execution completed!
+Check the result.txt file for the results
+
+real  0m 27.591s
+user  3m 30.401s
+sys   0m  0.387s
+```
