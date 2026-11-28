@@ -1,0 +1,100 @@
+From b4a491670ee0c042626b9b4e0ac802354bbf1422 Mon Sep 17 00:00:00 2001
+From: "Roberto A. Foglietta" <roberto.foglietta@gmail.com>
+Date: Sat, 28 Nov 2026 14:43:12 +0100
+Subject: [PATCH] speedup/parallel-workload-speedup3.patch: posix + aligned
+
+Signed-off-by: Roberto A. Foglietta <roberto.foglietta@gmail.com>
+---
+ src/utils/utilities.c | 33 ++++++++++++++++++++++-----------
+ 1 file changed, 22 insertions(+), 11 deletions(-)
+
+diff --git a/src/utils/utilities.c b/src/utils/utilities.c
+index 148847f..a5f4415 100644
+--- a/src/utils/utilities.c
++++ b/src/utils/utilities.c
+@@ -58,15 +58,28 @@
+ 
+ #include <errno.h>
+ #include <unistd.h>
+-#include <stdalign.h>
+ 
+ /*
+  * Reusable read-ahead buffer for serialized stdin access.
+  * The existing worker mutex protects its use.
+  */
+-#define STS_STDIN_CACHE_SIZE (64U * 1024U)
++#define DATASIZ (64U * 1024U)
+ 
+-static __thread alignas(8) BYTE stdin_read_cache[STS_STDIN_CACHE_SIZE];
++#ifdef __STDC_VERSION__
++#   if __STDC_VERSION__ >= 201112L
++#   include <stdalign.h>
++#   define ALIGN8_BEFORE alignas(8)
++#   define ALIGN8_AFTER
++#   endif
++#endif
++
++#ifndef ALIGN8_BEFORE
++#define ALIGN8_BEFORE
++#define ALIGN8_AFTER __attribute__((aligned(8)))
++#endif
++
++#define ALIGNED_DATA_BUFFER(_type, _nme, _len) \
++    ALIGN8_BEFORE _type _nme[_len] ALIGN8_AFTER
+ 
+ /*
+  * Forward static function declarations
+@@ -79,7 +92,6 @@ static void *testBits(void *thread_args);
+ static void parseBitsASCIIInput(struct thread_state *thread_state);
+ static void parseBitsBinaryInput(struct thread_state *thread_state);
+ 
+-
+ /*
+  * getNumber - get a number from a stream
+  *
+@@ -1598,7 +1610,7 @@ static void
+ *testBits(void *thread_args)
+ {
+ 	struct thread_state *thread_state = (struct thread_state *) thread_args;
+-	char buf[BUFSIZ + 1];	// time string buffer
++	ALIGNED_DATA_BUFFER(char, buf, BUFSIZ + 1);	// time string buffer
+ 
+ 	/*
+ 	 * Check preconditions (firewall)
+@@ -1784,7 +1796,8 @@ parseBitsBinaryInput(struct thread_state *thread_state)
+ 	size_t bytes_left;
+ 	size_t i;
+ 	off_t offset;
+-	BYTE buffer[BUFSIZ];
++
++	ALIGNED_DATA_BUFFER(BYTE, buffer, DATASIZ);
+ 
+ 	/*
+ 	 * Check preconditions (firewall)
+@@ -1854,12 +1867,10 @@ parseBitsBinaryInput(struct thread_state *thread_state)
+ 			}
+ 
+ 			bytes_left = (bits_left + BITS_N_BYTE - 1) / BITS_N_BYTE;
+-			bytes_wanted = bytes_left;
+-			if (bytes_wanted > sizeof(stdin_read_cache))
+-				bytes_wanted = sizeof(stdin_read_cache);
++			bytes_wanted = (bytes_left > DATASIZ) ? DATASIZ : bytes_left;
+ 
+ 			do {
+-				bytes_read = read(input_fd, stdin_read_cache, bytes_wanted);
++				bytes_read = read(input_fd, buffer, bytes_wanted);
+ 			} while (bytes_read < 0 && errno == EINTR);
+ 
+ 			if (bytes_read < 0) {
+@@ -1872,7 +1883,7 @@ parseBitsBinaryInput(struct thread_state *thread_state)
+ 			}
+ 
+ 			done = copyBitsToEpsilon(state, thread_state->thread_id,
+-				stdin_read_cache, (size_t)bytes_read * BITS_N_BYTE,
++				buffer, (size_t)bytes_read * BITS_N_BYTE,
+ 				&num_0s, &num_1s, &bitsRead);
+ 		} while (done == false);
+ 	}
+-- 
+2.34.1
+
