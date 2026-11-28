@@ -218,7 +218,7 @@ create_matrix(int M, int Q)
 	/*
 	 * Allocate array of matrix rows
 	 */
-	matrix = malloc(M * sizeof(matrix[0]));
+	matrix = aligned_malloc(M * sizeof(matrix[0]));
 	if (matrix == NULL) {
 		errp(120, __func__, "cannot malloc of %ld elements of %ld bytes each for matrix rows",
 		     (long int) M, sizeof(BitSequence *));
@@ -228,7 +228,7 @@ create_matrix(int M, int Q)
 	 * Allocate the columns for each matrix row
 	 */
 	for (i = 0; i < M; i++) {
-		matrix[i] = malloc(Q * sizeof(matrix[0][0]));
+		matrix[i] = aligned_malloc(Q * sizeof(matrix[0][0]));
 		if (matrix[i] == NULL) {
 			errp(120, __func__, "cannot malloc of %ld elements of %ld bytes each for matrix[%d] column",
 			     (long int) Q, sizeof(BitSequence), i);

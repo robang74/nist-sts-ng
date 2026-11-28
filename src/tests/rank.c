@@ -181,7 +181,7 @@ Rank_init(struct state *state)
 	/*
 	 * Allocate the array for the rank test matrices for each thread
 	 */
-	state->rank_matrix = malloc((size_t) state->numberOfThreads * sizeof(*state->rank_matrix));
+	state->rank_matrix = aligned_malloc((size_t) state->numberOfThreads * sizeof(*state->rank_matrix));
 	if (state->rank_matrix == NULL) {
 		errp(50, __func__, "cannot malloc for rank_matrix: %ld elements of %ld bytes each", state->numberOfThreads,
 		     sizeof(*state->rank_matrix));
@@ -1145,16 +1145,16 @@ Rank_destroy(struct state *state)
 		if (state->rank_matrix[i] != NULL) {
 			for (j = 0; j < NUMBER_OF_ROWS_RANK; j++) {
 				if (state->rank_matrix[i][j] != NULL) {
-					free(state->rank_matrix[i][j]);
+					aligned_free(state->rank_matrix[i][j]);
 					state->rank_matrix[i][j] = NULL;
 				}
 			}
-			free(state->rank_matrix[i]);
+			aligned_free(state->rank_matrix[i]);
 			state->rank_matrix[i] = NULL;
 		}
 	}
 	if (state->rank_matrix != NULL) {
-		free(state->rank_matrix);
+		aligned_free(state->rank_matrix);
 		state->rank_matrix = NULL;
 	}
 

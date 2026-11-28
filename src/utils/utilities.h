@@ -40,8 +40,8 @@ extern long int str2longint(bool * success_p, char *string);
 extern void generatorOptions(struct state *state);
 extern void chooseTests(struct state *state);
 extern void fixParameters(struct state *state);
-extern bool copyBitsToEpsilon(struct state *state, long int thread_id, BYTE *x, long int xBitLength, long int *num_0s,
-			      long int *num_1s, long int *bitsRead);
+extern bool copyBitsToEpsilon(struct state *state, long int thread_id, BYTE *x,
+  long int xBitLength, long int *num_0s, long int *num_1s, long int *bitsRead);
 extern void invokeTestSuite(struct state *state);
 extern void read_from_p_val_file(struct state *state);
 extern void write_p_val_to_file(struct state *state);

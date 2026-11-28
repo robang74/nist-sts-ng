@@ -7,6 +7,9 @@
 #include "packed.h"
 #include "debug.h"
 
+#define ALIGNED_MEMORY_C
+#include "aligned_memory.h"
+
 static unsigned int
 sts_popcount64(uint64_t x)
 {
@@ -21,7 +24,6 @@ sts_popcount64(uint64_t x)
 	return (unsigned int) ((x * UINT64_C(0x0101010101010101)) >> 56);
 #endif
 }
-
 
 
 static unsigned int
@@ -54,6 +56,7 @@ sts_packed_get64(const uint64_t *words, long int first)
     return value;
 }
 
+
 /*
  * Count all configured templates in one scan of each block.
  * next_allowed[id] reproduces the legacy per-template j += m - 1 skip:
@@ -74,6 +77,7 @@ sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
     long int k;
     long int block;
     long int j;
+    int ret = 0;
 
     if (words == NULL || templates == NULL || results == NULL || first < 0 ||
         n <= 0 || block_len <= 0 || blocks <= 0 || blocks > BLOCKS_NON_OVERLAPPING ||
@@ -82,12 +86,10 @@ sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
         return 0;
 
     lookup_len = (size_t) 1U << (unsigned int)m;
-    lookup = malloc(lookup_len * sizeof(*lookup));
-    next_allowed = malloc((size_t)template_count * sizeof(*next_allowed));
+    lookup = aligned_malloc(lookup_len * sizeof(*lookup));
+    next_allowed = aligned_malloc((size_t)template_count * sizeof(*next_allowed));
     if (lookup == NULL || next_allowed == NULL) {
-        free(lookup);
-        free(next_allowed);
-        return 0;
+        goto return_on_error;
     }
     for (i = 0; i < lookup_len; ++i)
         lookup[i] = UINT16_MAX;
@@ -99,16 +101,12 @@ sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
         for (k = 0; k < m; ++k) {
             unsigned int bit = (unsigned int)templates[jj * m + k];
             if (bit > 1) {
-                free(lookup);
-                free(next_allowed);
-                return 0;
+                goto return_on_error;
             }
             pattern = (pattern << 1) | bit;
         }
         if (lookup[pattern] != UINT16_MAX) {
-            free(lookup);
-            free(next_allowed);
-            return 0;
+            goto return_on_error;
         }
         lookup[pattern] = (uint16_t)jj;
     }
@@ -131,10 +129,11 @@ sts_packed_nonoverlap_counts(const uint64_t *words, long int first,
             }
         }
     }
-
-    free(lookup);
-    free(next_allowed);
-    return 1;
+    ret = 1;
+return_on_error:
+    aligned_free(lookup);
+    aligned_free(next_allowed);
+    return ret;
 }
 
 /*

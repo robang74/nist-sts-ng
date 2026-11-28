@@ -23,8 +23,8 @@
 
 #ifndef DYN_ALLOC_H
 #   define DYN_ALLOC_H
-
-#   define DEFAULT_CHUNK (1024)	// by default, allocate DEFAULT_CHUNK at a time
+//RAF: moved in def.h
+//# define DEFAULT_CHUNK (1024)	// by default, allocate DEFAULT_CHUNK at a time
 
 
 /*

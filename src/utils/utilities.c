@@ -51,7 +51,7 @@
 #include <stdio.h>
 
 // sts includes
-#include "../utils/externs.h"
+#include "externs.h"
 #include "utilities.h"
 #include "packed.h"
 #include "debug.h"
@@ -63,23 +63,7 @@
  * Reusable read-ahead buffer for serialized stdin access.
  * The existing worker mutex protects its use.
  */
-#define DATASIZ (64U * 1024U)
-
-#ifdef __STDC_VERSION__
-#   if __STDC_VERSION__ >= 201112L
-#   include <stdalign.h>
-#   define ALIGN8_BEFORE alignas(8)
-#   define ALIGN8_AFTER
-#   endif
-#endif
-
-#ifndef ALIGN8_BEFORE
-#define ALIGN8_BEFORE
-#define ALIGN8_AFTER __attribute__((aligned(8)))
-#endif
-
-#define ALIGNED_DATA_BUFFER(_type, _nme, _len) \
-    ALIGN8_BEFORE _type _nme[_len] ALIGN8_AFTER
+#define DATASIZ DEFAULT_CHUNK
 
 /*
  * Forward static function declarations
@@ -1510,7 +1494,9 @@ handleFileBasedBitStreams(struct state *state)
 	pthread_attr_t attr;
 	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER;
-	struct thread_state *thread_args = malloc(state->numberOfThreads * sizeof(struct thread_state));
+	struct thread_state *thread_args =
+	    aligned_malloc(state->numberOfThreads * sizeof(struct thread_state));
+	//RAF: thread_args is never freed, but goes with exit()
 	void *status;
 
 	/*

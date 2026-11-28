@@ -34,6 +34,10 @@
 #   include <stdio.h>
 #endif /* LEGACY_FFT */
 
+#include "aligned_memory.h"
+
+#define DEFAULT_CHUNK (4096U)  // by default, allocate DEFAULT_CHUNK at a time
+
 /*****************************************************************************
  M A C R O S
  *****************************************************************************/
