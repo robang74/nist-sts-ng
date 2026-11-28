@@ -40,6 +40,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <sys/types.h>
 
 // for checking dir
 #include <fcntl.h>
@@ -1485,6 +1486,7 @@ handleFileBasedBitStreams(struct state *state)
 	pthread_t thread[state->numberOfThreads];
 	pthread_attr_t attr;
 	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER;
 	struct thread_state *thread_args = malloc(state->numberOfThreads * sizeof(struct thread_state));
 	void *status;
 
@@ -1542,6 +1544,7 @@ handleFileBasedBitStreams(struct state *state)
 		thread_args[i].global_state = state;
 		thread_args[i].thread_id = i;
 		thread_args[i].mutex = &mutex;
+		thread_args[i].input_mutex = &input_mutex;
 
 		io_ret = pthread_create(&thread[i], &attr, testBits, &thread_args[i]);
 		if (io_ret != 0) {
@@ -1561,6 +1564,7 @@ handleFileBasedBitStreams(struct state *state)
 			errp(224, __func__, "error on pthread_join()");
 		}
 	}
+	pthread_mutex_destroy(&input_mutex);
 	pthread_mutex_destroy(&mutex);
 
 	dbg(DBG_LOW, "End of iterate phase\n");
@@ -1610,15 +1614,30 @@ static void
 		state->iterationsMissing -= 1;
 
 		/*
-		 * Parse and data for this iteration
+		 * stdin is sequential, and legacy output preserves input-order records:
+		 * keep job assignment and parsing in the same critical section there.
 		 */
-		if (state->dataFormat == FORMAT_ASCII_01) {
-			parseBitsASCIIInput(thread_state);
+		if (state->stdinData == true || state->legacy_output == true) {
+			if (state->dataFormat == FORMAT_ASCII_01) {
+				parseBitsASCIIInput(thread_state);
+			} else {
+				parseBitsBinaryInput(thread_state);
+			}
+			pthread_mutex_unlock(thread_state->mutex);
 		} else {
-			parseBitsBinaryInput(thread_state);
-		}
+			/* File-backed jobs have deterministic, independent offsets. */
+			pthread_mutex_unlock(thread_state->mutex);
+			if (state->dataFormat == FORMAT_ASCII_01)
+				pthread_mutex_lock(thread_state->input_mutex);
 
-		pthread_mutex_unlock(thread_state->mutex);
+			if (state->dataFormat == FORMAT_ASCII_01) {
+				parseBitsASCIIInput(thread_state);
+			} else {
+				parseBitsBinaryInput(thread_state);
+			}
+			if (state->dataFormat == FORMAT_ASCII_01)
+				pthread_mutex_unlock(thread_state->input_mutex);
+		}
 
 		/* Build per-worker packed data outside the input mutex. */
 		if (state->epsilon_words != NULL)
@@ -1747,9 +1766,15 @@ parseBitsBinaryInput(struct thread_state *thread_state)
 	long int num_0s;	// Count of 0 bits processed
 	long int num_1s;	// Count of 1 bits processed
 	long int bitsRead;	// Number of bits to read and process
-	bool done;		// true ==> we have converted enough data
+	bool done = false;	// true ==> we have converted enough data
 	BYTE byte;		// single bite
 	int io_ret;		// I/O return status
+	int input_fd;
+	ssize_t nread;
+	size_t bytes_left;
+	size_t i;
+	off_t offset;
+	BYTE buffer[BUFSIZ];
 
 	/*
 	 * Check preconditions (firewall)
@@ -1766,44 +1791,61 @@ parseBitsBinaryInput(struct thread_state *thread_state)
 	}
 
 	/*
-	 * If not reading randdata from stdin,
-	 * Seek to the position of the first bit which has not been copied into the stream yet
-	 */
-	if (state->stdinData == false &&
-	    fseek(state->streamFile, state->base_seek + thread_state->iteration_being_done * state->tp.n /
-							BITS_N_BYTE, SEEK_SET) != 0) {
-
-		errp(226, __func__, "could not seek %ld further into file: %s",
-		     thread_state->iteration_being_done * state->tp.n / BITS_N_BYTE, state->randomDataPath);
-	}
-
-	/*
 	 * Copy the next n bits from the streamFile to epsilon
 	 */
 	num_0s = 0;
 	num_1s = 0;
 	bitsRead = 0;
-	clearerr(state->streamFile);
-	do {
-		/*
-		 * Read the next binary octet
-		 */
-		io_ret = fgetc(state->streamFile);
-		if (ferror(state->streamFile)) {
-			errp(226, __func__, "read error while reading file: %s", state->randomDataPath);
-		} else if (feof(state->streamFile) || io_ret == EOF) {
-			err(226, __func__, "encounted EOF (end of file) while reading file: %s: %ld bits were read before EOF",
-			    state->randomDataPath, bitsRead);
-		} else if (io_ret < 0) {
-			errp(226, __func__, "unexpected fgetc return while reading file: %s", state->randomDataPath);
-		}
-		byte = (BYTE) io_ret;
 
+	if (state->stdinData == false) {
 		/*
-		 * Add bits of the octet to the epsilon bit stream
+		 * Every file-backed iteration has its own absolute offset. Use
+		 * pread() so workers can read and unpack concurrently without
+		 * sharing the FILE cursor or holding the job-counter mutex.
 		 */
-		done = copyBitsToEpsilon(state, thread_state->thread_id, &byte, BITS_N_BYTE, &num_0s, &num_1s, &bitsRead);
-	} while (done == false);
+		input_fd = fileno(state->streamFile);
+		if (input_fd < 0)
+			errp(226, __func__, "fileno failed for input file: %s", state->randomDataPath);
+		offset = (off_t)state->base_seek +
+			 ((off_t)thread_state->iteration_being_done * (off_t)state->tp.n) / BITS_N_BYTE;
+		bytes_left = (size_t)(state->tp.n / BITS_N_BYTE +
+				     (state->tp.n % BITS_N_BYTE != 0));
+		while (bytes_left > 0 && done == false) {
+			size_t request = bytes_left < sizeof(buffer) ? bytes_left : sizeof(buffer);
+			do {
+				nread = pread(input_fd, buffer, request, offset);
+			} while (nread < 0 && errno == EINTR);
+			if (nread < 0) {
+				errp(226, __func__, "read error while reading file: %s", state->randomDataPath);
+			} else if (nread == 0) {
+				err(226, __func__, "encounted EOF (end of file) while reading file: %s: %ld bits were read before EOF",
+				    state->randomDataPath, bitsRead);
+			}
+			for (i = 0; i < (size_t)nread && done == false; i++) {
+				done = copyBitsToEpsilon(state, thread_state->thread_id, &buffer[i],
+							BITS_N_BYTE, &num_0s, &num_1s, &bitsRead);
+			}
+			offset += nread;
+			bytes_left -= (size_t)nread;
+		}
+	} else {
+		/* stdin has no independent offset; its consumer remains serialized. */
+		clearerr(state->streamFile);
+		do {
+			io_ret = fgetc(state->streamFile);
+			if (ferror(state->streamFile)) {
+				errp(226, __func__, "read error while reading file: %s", state->randomDataPath);
+			} else if (feof(state->streamFile) || io_ret == EOF) {
+				err(226, __func__, "encounted EOF (end of file) while reading file: %s: %ld bits were read before EOF",
+				    state->randomDataPath, bitsRead);
+			} else if (io_ret < 0) {
+				errp(226, __func__, "unexpected fgetc return while reading file: %s", state->randomDataPath);
+			}
+			byte = (BYTE)io_ret;
+			done = copyBitsToEpsilon(state, thread_state->thread_id, &byte, BITS_N_BYTE,
+						 &num_0s, &num_1s, &bitsRead);
+		} while (done == false);
+	}
 
 	/*
 	 * Write stats to freq.txt if in legacy_output mode

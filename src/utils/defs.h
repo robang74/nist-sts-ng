@@ -513,7 +513,8 @@ struct thread_state {
 	long int thread_id;
 	struct state *global_state;
 	long int iteration_being_done;
-	pthread_mutex_t *mutex;
+	pthread_mutex_t *mutex;             /* Short job-counter critical section */
+	pthread_mutex_t *input_mutex;       /* Shared stdio input (ASCII files) */
 };
 
 /* *INDENT-ON* */
