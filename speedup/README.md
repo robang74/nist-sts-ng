@@ -1,24 +1,33 @@
-### Speeding up results
+## Speeding up results
 
 The patched phase6 computes 20x (on average) faster on all tests impacted.
 
-- Intel(R) Core(TM) i5-8365U CPU @ 1.60GHz (energy saving mode)
+- `Intel(R) Core(TM) i5-8365U CPU @ 1.60GHz` (energy saving mode)
 
-The main idea behind this work is what have been done in
+The main idea behind this work is what have been done on github by
 
-- github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess
+- [AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess](https://github.com/AndreiBalan-dev/NIST-Statistical-Test-Suite/tree/speed-up-assess)
 
 The optimization principle has been transferred with the support of ChatGPT
 which artifacts have been saved in `speedup` folder for each of the six phases.
+
+---
 
 ### SPEEDUP
 
 #### 8x multi-thread
 
+* ratio `user / real` is `171.704 / 29.826` = **5.76**
+* expected max effectiveness: 6 threads on 8 cores
+
+```sh
 roberto@x280[8]:~/robang74/nist-sts-ng$
 time ./sts -v 1 -I 10 -s -i 1000 -S 1048576
     -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
-Testing data from file: /home/roberto/robang74/uchaosys/kdev/data32.bin.01
+```
+```console
+Testing data from file:
+    /home/roberto/robang74/uchaosys/kdev/data32.bin.01
 Start of init phase
 End of init phase
 
@@ -37,13 +46,21 @@ Check the result.txt file for the results
 real  0m 29.826s
 user  2m 51.704s
 sys   0m  0.279s
+```
 
-#### single-thread
+#### Single-thread
 
+* ratio `user / real` is `9.015 / 9.074` = **99.35%**
+* entirely computational with a minimal I/O workload
+
+```sh
 roberto@x280[8]:~/robang74/nist-sts-ng$
 time ./sts -v 1 -I 10 -s -i 128 -T 1 -S 1048576
     -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
-Testing data from file: /home/roberto/robang74/uchaosys/kdev/data32.bin.01
+```
+```console
+Testing data from file:
+    /home/roberto/robang74/uchaosys/kdev/data32.bin.01
 Start of init phase
 End of init phase
 
@@ -62,6 +79,7 @@ Check the result.txt file for the results
 real  0m 9.074s
 user  0m 9.015s
 sys   0m 0.036s
+```
 
 ---
 
@@ -69,10 +87,17 @@ sys   0m 0.036s
 
 #### 8x multi-thread
 
+* ratio `user / real` is `4057.6 / 530.80` = **7.64**
+* expected max effectiveness: 8 threads on 8 cores
+
+```sh
 roberto@x280[2]:~/robang74/nist-sts-ng$
 time ./sts -v 1 -I 10 -s -i 1000 -S 1048576
     -F r -w test-02 ~/robang74/uchaosys/kdev/data32.bin.01
-Testing data from file: /home/roberto/robang74/uchaosys/kdev/data32.bin.01
+```
+```console
+Testing data from file:
+    /home/roberto/robang74/uchaosys/kdev/data32.bin.01
 Start of init phase
 End of init phase
 
@@ -92,13 +117,21 @@ Check the result.txt file for the results
 real   8m 50.809s
 user  67m 37.590s
 sys    0m  3.246s
+```
 
-#### single-thread
+#### Single-thread
 
+* ratio `user / real` is `183.1 / 183.3` = **99.91%**
+* totally computational with a negligible I/O workload
+
+```sh
 roberto@x280[8]:~/robang74/nist-sts-ng$
 time ./sts -v 1 -I 10 -s -i 128 -T 1 -S 1048576
     -F r -w test-10 ~/robang74/uchaosys/kdev/data32.bin.01
-Testing data from file: /home/roberto/robang74/uchaosys/kdev/data32.bin.01
+```
+```console
+Testing data from file:
+    /home/roberto/robang74/uchaosys/kdev/data32.bin.01
 Start of init phase
 End of init phase
 
@@ -117,4 +150,4 @@ Check the result.txt file for the results
 real  3m 33.267s
 user  3m 33.100s
 sys   0m  0.093s
-
+```
