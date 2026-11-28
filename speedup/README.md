@@ -243,3 +243,60 @@ real  0m 27.591s
 user  3m 30.401s
 sys   0m  0.387s
 ```
+
+---
+
+### STDIN I/O
+
+The mere use of `read()` instead `fgetc()` a 20% (circa)
+
+#### 64KiB read()
+
+```sh
+roberto@x280[1]:~/robang74/nist-sts-ng$
+time -p ./sts -v 1 -I 10 -s -i 1000 -T 8 -S 1048576 -F r
+    -w test-10 - <~/robang74/uchaosys/kdev/data32.bin.01
+```
+```console
+Testing data from file: -
+  test data will be read from standard input (stdin)
+...
+Completed iteration   1 of 1000 at 2026-11-28 13:04:16
+Completed iteration  11 of 1000 at 2026-11-28 13:04:16
+Completed iteration  21 of 1000 at 2026-11-28 13:04:16
+Completed iteration  31 of 1000 at 2026-11-28 13:04:16
+Completed iteration  41 of 1000 at 2026-11-28 13:04:17
+...
+Completed iteration 991 of 1000 at 2026-11-28 13:04:42
+...
+Execution completed!
+Check the result.txt file for the results
+real   26.76
+user  169.95
+sys     0.28
+```
+
+#### 1 MiB read()
+
+```console
+real   27.61
+user  173.43
+sys     0.28
+```
+
+#### 512B read()
+
+```console
+real   27.70
+user  174.92
+sys     0.52
+```
+
+#### 1-byte fgetc()
+
+```console
+real   31.37
+user  174.36
+sys     0.39
+```
+
