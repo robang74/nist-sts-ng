@@ -1,0 +1,95 @@
+From 8004feee5e28e21bbf7defb95eb883118fe972a9 Mon Sep 17 00:00:00 2001
+From: "Roberto A. Foglietta" <roberto.foglietta@gmail.com>
+Date: Sat, 28 Nov 2026 13:29:21 +0100
+Subject: [PATCH] speedup/parallel-workload-speedup2.patch: applied
+
+Signed-off-by: Roberto A. Foglietta <roberto.foglietta@gmail.com>
+---
+ src/utils/utilities.c | 56 +++++++++++++++++++++++++++++++++----------
+ 1 file changed, 43 insertions(+), 13 deletions(-)
+
+diff --git a/src/utils/utilities.c b/src/utils/utilities.c
+index 1dbb252..148847f 100644
+--- a/src/utils/utilities.c
++++ b/src/utils/utilities.c
+@@ -56,6 +56,17 @@
+ #include "packed.h"
+ #include "debug.h"
+ 
++#include <errno.h>
++#include <unistd.h>
++#include <stdalign.h>
++
++/*
++ * Reusable read-ahead buffer for serialized stdin access.
++ * The existing worker mutex protects its use.
++ */
++#define STS_STDIN_CACHE_SIZE (64U * 1024U)
++
++static __thread alignas(8) BYTE stdin_read_cache[STS_STDIN_CACHE_SIZE];
+ 
+ /*
+  * Forward static function declarations
+@@ -1767,8 +1778,7 @@ parseBitsBinaryInput(struct thread_state *thread_state)
+ 	long int num_1s;	// Count of 1 bits processed
+ 	long int bitsRead;	// Number of bits to read and process
+ 	bool done = false;	// true ==> we have converted enough data
+-	BYTE byte;		// single bite
+-	int io_ret;		// I/O return status
++	int io_ret; 		// I/O return status
+ 	int input_fd;
+ 	ssize_t nread;
+ 	size_t bytes_left;
+@@ -1832,18 +1842,38 @@ parseBitsBinaryInput(struct thread_state *thread_state)
+ 		/* stdin has no independent offset; its consumer remains serialized. */
+ 		clearerr(state->streamFile);
+ 		do {
+-			io_ret = fgetc(state->streamFile);
+-			if (ferror(state->streamFile)) {
+-				errp(226, __func__, "read error while reading file: %s", state->randomDataPath);
+-			} else if (feof(state->streamFile) || io_ret == EOF) {
+-				err(226, __func__, "encounted EOF (end of file) while reading file: %s: %ld bits were read before EOF",
+-				    state->randomDataPath, bitsRead);
+-			} else if (io_ret < 0) {
+-				errp(226, __func__, "unexpected fgetc return while reading file: %s", state->randomDataPath);
++			size_t bits_left;
++			size_t bytes_left;
++			size_t bytes_wanted;
++			ssize_t bytes_read;
++
++			bits_left = (size_t)(state->tp.n - bitsRead);
++			if (bits_left == 0) {
++				done = true;
++				break;
++			}
++
++			bytes_left = (bits_left + BITS_N_BYTE - 1) / BITS_N_BYTE;
++			bytes_wanted = bytes_left;
++			if (bytes_wanted > sizeof(stdin_read_cache))
++				bytes_wanted = sizeof(stdin_read_cache);
++
++			do {
++				bytes_read = read(input_fd, stdin_read_cache, bytes_wanted);
++			} while (bytes_read < 0 && errno == EINTR);
++
++			if (bytes_read < 0) {
++				errp(226, __func__, "read(stdin) failed: %s\n", strerror(errno));
++			} else
++			if (bytes_read == 0) {
++				warnp(__func__, "unexpected EOF on stdin\n");
++				done = true;
++				break;
+ 			}
+-			byte = (BYTE)io_ret;
+-			done = copyBitsToEpsilon(state, thread_state->thread_id, &byte, BITS_N_BYTE,
+-						 &num_0s, &num_1s, &bitsRead);
++
++			done = copyBitsToEpsilon(state, thread_state->thread_id,
++				stdin_read_cache, (size_t)bytes_read * BITS_N_BYTE,
++				&num_0s, &num_1s, &bitsRead);
+ 		} while (done == false);
+ 	}
+ 
+-- 
+2.34.1
+
