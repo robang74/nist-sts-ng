@@ -12,6 +12,10 @@ The optimization principle has been transferred with the support of ChatGPT whic
 
 ### Performance increase
 
+> [!NOTE]
+> 
+> About the number of threads, note that they are N workers plus the parent that is in charge of preparing the jobs queue.
+
 A single confrontation on a single system is merely indicative and cannot be taken as a conclusion of the speedup achievement. On the other hand, a **24x** speedup cannot be overlooked, either.
 
 * `8x`: `530.8 / 29.83` = **`17.8x`** (`real`), `4057.6 / 171.70` = **`23.6x`** (`user`)
@@ -19,9 +23,7 @@ A single confrontation on a single system is merely indicative and cannot be tak
 
 Moreover, it has been speedup by another `7.64 / 5.76 = 1.33x` by achieving a more effective CPU allocation on computational workload, while the I/O workload appears negligible in all the cases.
 
-> [!NOTE]
-> 
-> About the number of threads, note that they are N workers plus the parent that is in charge of preparing the jobs queue.
+The manyfolds performance increase revealed a second order bottleneck: the workers management. Although it is related to reading data, it is not about I/O but about threads mutually blocking during the read. Which is necessary when reading from `stdin`, not when reading from a seekable file that can be accessed concurrently.
 
 ---
 
