@@ -15,8 +15,8 @@ which artifacts have been saved in `speedup` folder for each of the six phases.
 
 A single confrontation on a single system is merely indicative and cannot be taken as a conclusion of the speedup achievement. On the other hand, a **20x** speedup cannot be overlooked, either.
 
-* `8x`: `530.8 / 29.83` = **`17.8x`** (real), `4057.6 / 171.70` = **`23.6x`** (user)
-* `1x`: `183.3 / 9.704` = **`18.9x`** (real), ` 183.1 /   9.72` = **`18.9x`** (user) 
+* `8x`: `530.8 / 29.83` = **`17.8x`** (`real`), `4057.6 / 171.70` = **`23.6x`** (`user`)
+* `1x`: `183.3 / 9.704` = **`18.9x`** (`real`), ` 183.1 /   9.72` = **`18.9x`** (`user`) 
 
 Potentially, it can be speedup by another `7.64 / 5.76 = 1.33x` by achieving a more effective CPU allocation on computational workload, while the I/O workload appears negligible in all the cases.
 
@@ -24,8 +24,8 @@ Potentially, it can be speedup by another `7.64 / 5.76 = 1.33x` by achieving a m
 
 ### SPEEDUP
 
-* ratio `real` vs iterations: ` 29.83` ms (`-T8`), `70.89` ms (`-T1`), 2.38x
-* ratio `user` vs iterations: `171.70` ms (`-T8`), `70.43` ms (`-T1`), 2.44x
+* ratio `real` vs iterations: ` 29.83` ms (`-T8`), `70.89` ms (`-T1`), `2.38x`
+* ratio `user` vs iterations: `171.70` ms (`-T8`), `70.43` ms (`-T1`), `2.44x`
 
 #### 8x multi-thread
 
@@ -97,8 +97,8 @@ sys   0m 0.036s
 
 ### ORIGINAL
 
-* ratio `real` vs iterations: ` 530.8` ms (`-T8`), `1666.1` ms (`-T1`), 3.14x
-* ratio `user` vs iterations: `4057.6` ms (`-T8`), `1664.8` ms (`-T1`), 0.41x
+* ratio `real` vs iterations: ` 530.8` ms (`-T8`), `1666.1` ms (`-T1`), `3.14x`
+* ratio `user` vs iterations: `4057.6` ms (`-T8`), `1664.8` ms (`-T1`), `0.41x`
 
 #### 8x multi-thread
 
